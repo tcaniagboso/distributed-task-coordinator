@@ -1,0 +1,37 @@
+# Build directories
+/build/
+/cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+Makefile
+
+# Compiled binaries
+*.out
+*.exe
+*.o
+*.a
+*.so
+*.dylib
+
+# Debug / logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# macOS
+*.dSYM/
+
+# Coverage
+*.gcda
+*.gcno
+*.gcov
+
+# Temp files
+*.tmp
+*.swp
