@@ -26,9 +26,9 @@ namespace task {
     struct WordCountTask {
         std::string words_{};
 
-        WordCountTask() = default;
+        explicit WordCountTask() = default;
 
-        WordCountTask(std::string words)
+        explicit WordCountTask(std::string words)
                 : words_{std::move(words)} {}
     };
 
@@ -48,7 +48,7 @@ namespace task {
         SyntheticTask synthetic_task_;
         WordCountTask word_count_task_;
 
-        Task(uint64_t task_id, uint32_t client_id, TaskType type)
+        explicit Task(uint64_t task_id, uint32_t client_id, TaskType type)
                 : task_id_{task_id},
                   client_id_{client_id},
                   type_{type},

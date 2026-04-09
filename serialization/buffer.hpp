@@ -1,6 +1,7 @@
 #pragma once
 
 #include <arpa/inet.h>
+#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <stdio.h>
@@ -31,13 +32,13 @@ namespace serialization {
         void write_bytes(const void *data, size_t size) {
             size_t offset = buffer_.size();
             buffer_.resize(offset + size);
-            memcpy(buffer_.data(), data, size);
+            memcpy(buffer_.data() + offset, data, size);
         }
 
     public:
         std::vector<char> buffer_;
 
-        BufferWriter() : buffer_{} {}
+        explicit BufferWriter() : buffer_{} {}
 
         void write_u8(uint8_t val) {
             buffer_.push_back(static_cast<char>(val));
@@ -59,8 +60,19 @@ namespace serialization {
         }
 
         void write_string(const std::string &s) {
-            write_u64(static_cast<uint64_t>(s.size()));
-            buffer_.insert(buffer_.end(), s.begin(), s.end());
+            write_u32(static_cast<uint32_t>(s.size()));
+            write_bytes(s.data(), s.size());
+            // buffer_.insert(buffer_.end(), s.begin(), s.end());
+        }
+
+        void reserve_u32() {
+            write_u32(0);
+        }
+
+        void write_payload_size(uint32_t payload_size) {
+            assert(buffer_.size() >= sizeof(payload_size));
+            uint32_t encoded = htonl(payload_size);
+            memcpy(buffer_.data(), &encoded, sizeof(encoded));
         }
 
         std::vector<char> &get_buffer() {
@@ -71,11 +83,13 @@ namespace serialization {
     class BufferReader {
     public:
         const char *buffer_;
+        const char *end_;
         size_t offset_;
 
-        BufferReader(const char *buffer) : buffer_{buffer}, offset_{0} {}
+        explicit BufferReader(const char *buffer, size_t size) : buffer_{buffer}, offset_{0}, end_{buffer + size} {}
 
         uint8_t read_u8() {
+            assert(buffer_ + offset_ + sizeof(uint8_t) <= end_);
             uint8_t val = static_cast<uint8_t>(*(buffer_ + offset_));
             offset_ += 1;
             return val;
@@ -83,6 +97,7 @@ namespace serialization {
 
         uint16_t read_u16() {
             uint16_t val;
+            assert(buffer_ + offset_ + sizeof(val) <= end_);
             memcpy(&val, buffer_ + offset_, sizeof(val));
             offset_ += sizeof(val);
             uint16_t decoded = ntohs(val);
@@ -91,6 +106,7 @@ namespace serialization {
 
         uint32_t read_u32() {
             uint32_t val;
+            assert(buffer_ + offset_ + sizeof(val) <= end_);
             memcpy(&val, buffer_ + offset_, sizeof(val));
             offset_ += sizeof(val);
             uint32_t decoded = ntohl(val);
@@ -99,6 +115,7 @@ namespace serialization {
 
         uint64_t read_u64() {
             uint64_t val;
+            assert(buffer_ + offset_ + sizeof(val) <= end_);
             memcpy(&val, buffer_ + offset_, sizeof(val));
             offset_ += sizeof(val);
             uint64_t decoded = ntohll(val);
@@ -106,10 +123,11 @@ namespace serialization {
         }
 
         std::string read_string() {
-            uint64_t size = read_u64();
+            assert(buffer_ + offset_ + sizeof(val) <= end_);
+            uint32_t size = read_u32();
             std::string s(buffer_ + offset_, size);
             offset_ += size;
             return s;
         }
     };
-} // namespace buffer
+} // namespace serialization

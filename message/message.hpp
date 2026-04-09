@@ -14,7 +14,7 @@ namespace message {
         ASSIGNED_REPLICATE,
         COMPLETED_REPLICATE,
         HEARTBEAT,
-        REGISTER,
+        REGISTER
     };
 
     // Client -> Router -> Coordinator
@@ -28,9 +28,9 @@ namespace message {
 
         std::string words_{};
 
-        SubmitMsg() = default;
+        explicit SubmitMsg() = default;
 
-        SubmitMsg(uint64_t task_id, uint32_t client_id, task::TaskType type)
+        explicit SubmitMsg(uint64_t task_id, uint32_t client_id, task::TaskType type)
                 : task_id_{task_id},
                   client_id_{client_id},
                   type_{type} {}
@@ -68,9 +68,9 @@ namespace message {
 
         std::string words_{};
 
-        AssignMsg() = default;
+        explicit AssignMsg() = default;
 
-        AssignMsg(uint64_t task_id, task::TaskType type)
+        explicit AssignMsg(uint64_t task_id, task::TaskType type)
                 : task_id_{task_id},
                   type_{type} {}
 
@@ -104,9 +104,9 @@ namespace message {
 
         uint8_t success_;
 
-        CompleteMsg() = default;
+        explicit CompleteMsg() = default;
 
-        CompleteMsg(uint64_t task_id, uint64_t started_at, uint64_t completed_at, uint8_t success)
+        explicit CompleteMsg(uint64_t task_id, uint64_t started_at, uint64_t completed_at, uint8_t success)
                 : task_id_{task_id},
                   started_at_{started_at},
                   completed_at_{completed_at},
@@ -138,9 +138,9 @@ namespace message {
 
         uint8_t success_;
 
-        ResultMsg() = default;
+        explicit ResultMsg() = default;
 
-        ResultMsg(uint64_t task_id, uint32_t result, uint8_t success)
+        explicit ResultMsg(uint64_t task_id, uint32_t result, uint8_t success)
                 : task_id_{task_id},
                   result_{result},
                   success_{success} {}
@@ -164,9 +164,9 @@ namespace message {
 
         uint32_t worker_id_;
 
-        AssignedReplicationMsg() = default;
+        explicit AssignedReplicationMsg() = default;
 
-        AssignedReplicationMsg(uint64_t task_id_, uint64_t queued_at, uint32_t worker_id)
+        explicit AssignedReplicationMsg(uint64_t task_id_, uint64_t queued_at, uint32_t worker_id)
                 : task_id_{task_id_},
                   queued_at_{queued_at},
                   worker_id_{worker_id} {}
@@ -191,9 +191,9 @@ namespace message {
 
         uint32_t worker_id_;
 
-        CompletedReplicationMsg() = default;
+        explicit CompletedReplicationMsg() = default;
 
-        CompletedReplicationMsg(uint64_t task_id, uint64_t started_at, uint64_t completed_at, uint32_t worker_id)
+        explicit CompletedReplicationMsg(uint64_t task_id, uint64_t started_at, uint64_t completed_at, uint32_t worker_id)
                 : task_id_{task_id},
                   started_at_{started_at},
                   completed_at_{completed_at},
@@ -217,9 +217,9 @@ namespace message {
     struct HeartBeatMsg {
         uint32_t worker_id_;
 
-        HeartBeatMsg() = default;
+        explicit HeartBeatMsg() = default;
 
-        HeartBeatMsg(uint32_t worker_id)
+        explicit HeartBeatMsg(uint32_t worker_id)
                 : worker_id_{worker_id} {}
 
         void serialize(serialization::BufferWriter &writer) {
@@ -232,17 +232,80 @@ namespace message {
     };
 
     struct Message {
-        MessageType type;
+        MessageType type_;
 
         int router_fd_;
 
-        SubmitMsg submit;
-        AssignMsg assign;
-        CompleteMsg complete;
-        ResultMsg result;
-        AssignedReplicationMsg assigned_rep;
-        CompletedReplicationMsg completed_rep;
-        HeartBeatMsg heartbeat;
+        SubmitMsg submit_;
+        AssignMsg assign_;
+        CompleteMsg complete_;
+        ResultMsg result_;
+        AssignedReplicationMsg assigned_rep_;
+        CompletedReplicationMsg completed_rep_;
+        HeartBeatMsg heartbeat_;
+
+        explicit Message() = default;
+        explicit Message(MessageType type) : type_{type} {}
+
+        void serialize(serialization::BufferWriter& writer) {
+            writer.write_u8(static_cast<uint8_t>(type_));
+
+            switch (type_) {
+                case MessageType::SUBMIT:
+                    submit_.serialize(writer);
+                    break;
+                case MessageType::ASSIGN:
+                    assign_.serialize(writer);
+                    break;
+                case MessageType::COMPLETE:
+                    complete_.serialize(writer);
+                    break;
+                case MessageType::RESULT:
+                    result_.serialize(writer);
+                    break;
+                case MessageType::ASSIGNED_REPLICATE:
+                    assigned_rep_.serialize(writer);
+                    break;
+                case MessageType::COMPLETED_REPLICATE:
+                    completed_rep_.serialize(writer);
+                    break;
+                case MessageType::HEARTBEAT:
+                    heartbeat_.serialize(writer);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        void deserialize(serialization::BufferReader& reader) {
+            type_ = static_cast<MessageType>(reader.read_u8());
+
+            switch (type_) {
+                case MessageType::SUBMIT:
+                    submit_.deserialize(reader);
+                    break;
+                case MessageType::ASSIGN:
+                    assign_.deserialize(reader);
+                    break;
+                case MessageType::COMPLETE:
+                    complete_.deserialize(reader);
+                    break;
+                case MessageType::RESULT:
+                    result_.deserialize(reader);
+                    break;
+                case MessageType::ASSIGNED_REPLICATE:
+                    assigned_rep_.deserialize(reader);
+                    break;
+                case MessageType::COMPLETED_REPLICATE:
+                    completed_rep_.deserialize(reader);
+                    break;
+                case MessageType::HEARTBEAT:
+                    heartbeat_.deserialize(reader);
+                    break;
+                default:
+                    break;
+            }
+        }
     };
 
 } // namespace message
