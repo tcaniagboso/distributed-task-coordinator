@@ -10,10 +10,10 @@ namespace lock_free {
     class SPSCQueue {
     private:
         struct alignas(64) PaddedAtomic {
-            std::atomic <size_t> value{0};
-            std::array<char, 64 - sizeof(std::atomic < size_t > )> padding{};
+            std::atomic<size_t> value{0};
+            std::array<char, 64 - sizeof(std::atomic<size_t>)> padding{};
         };
-        static_assert(sizeof(PaddedAtomic) == 64);
+        static_assert(sizeof(PaddedAtomic) == 64, "Padded Atomic size is not 64!!");
 
         PaddedAtomic head_;
         PaddedAtomic tail_;
@@ -26,24 +26,32 @@ namespace lock_free {
             return "Lock-Free SPSC Queue";
         }
 
+        SPSCQueue(const SPSCQueue &) = delete;
+
+        SPSCQueue &operator=(const SPSCQueue &) = delete;
+
+        SPSCQueue(SPSCQueue &&) = delete;
+
+        SPSCQueue &operator=(SPSCQueue &&) = delete;
+
         explicit SPSCQueue(size_t capacity);
 
         bool try_push(const T &value);
 
         bool try_pop(T &value);
 
-        [[nodiscard]] bool empty() const;
+        bool empty() const;
 
-        [[nodiscard]] bool full() const;
+        bool full() const;
 
-        [[nodiscard]] size_t size() const;
+        size_t size() const;
     };
 
     template<typename T>
     SPSCQueue<T>::SPSCQueue(size_t capacity)
             : head_{},
               tail_{},
-              buffer_{std::make_unique<T[]>(capacity)},
+              buffer_{std::unique_ptr<T[]>(new T[capacity])},
               capacity_{capacity} {}
 
     template<typename T>
@@ -75,7 +83,7 @@ namespace lock_free {
             return false;
         }
 
-        size_t index = head % capacity_;
+        size_t index = head & (capacity_ - 1);;
         value = buffer_[index];
         head_.value.store(head + 1, std::memory_order_release);
         return true;
@@ -90,7 +98,7 @@ namespace lock_free {
             return false;
         }
 
-        size_t index = tail % capacity_;
+        size_t index = tail & (capacity_ - 1);;
         buffer_[index] = value;
         tail_.value.store(tail + 1, std::memory_order_release);
         return true;

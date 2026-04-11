@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "../buffer/buffer.hpp"
+#include "../serialization/buffer.hpp"
 #include "../task/task.hpp"
 
 namespace message {
@@ -11,20 +11,22 @@ namespace message {
         ASSIGN,
         COMPLETE,
         RESULT,
+        QUEUED_REPLICATE,
         ASSIGNED_REPLICATE,
         COMPLETED_REPLICATE,
         HEARTBEAT,
-        REGISTER
+        REGISTER,
+        ACKNOWLEDGE
     };
 
     // Client -> Router -> Coordinator
     struct SubmitMsg {
-        uint64_t task_id_;
+        uint64_t task_id_{};
 
-        uint32_t client_id_;
-        uint32_t duration_us_;
+        uint32_t client_id_{};
+        uint32_t duration_us_{};
 
-        task::TaskType type_;
+        task::TaskType type_{};
 
         std::string words_{};
 
@@ -35,7 +37,7 @@ namespace message {
                   client_id_{client_id},
                   type_{type} {}
 
-        void serialize(serialization::BufferWriter &writer) {
+        void serialize(serialization::BufferWriter &writer) const {
             writer.write_u64(task_id_);
             writer.write_u32(client_id_);
             writer.write_u8(static_cast<uint8_t>(type_));
@@ -60,11 +62,11 @@ namespace message {
 
     // Coordinator -> Worker
     struct AssignMsg {
-        uint64_t task_id_;
+        uint64_t task_id_{};
 
-        uint32_t duration_us_;
+        uint32_t duration_us_{};
 
-        task::TaskType type_;
+        task::TaskType type_{};
 
         std::string words_{};
 
@@ -74,7 +76,7 @@ namespace message {
                 : task_id_{task_id},
                   type_{type} {}
 
-        void serialize(serialization::BufferWriter &writer) {
+        void serialize(serialization::BufferWriter &writer) const {
             writer.write_u64(task_id_);
             writer.write_u8(static_cast<uint8_t>(type_));
             if (type_ == task::TaskType::WORD_COUNT) {
@@ -110,9 +112,10 @@ namespace message {
                 : task_id_{task_id},
                   started_at_{started_at},
                   completed_at_{completed_at},
+                  result_{},
                   success_{success} {}
 
-        void serialize(serialization::BufferWriter &writer) {
+        void serialize(serialization::BufferWriter &writer) const {
             writer.write_u64(task_id_);
             writer.write_u64(started_at_);
             writer.write_u64(completed_at_);
@@ -145,7 +148,7 @@ namespace message {
                   result_{result},
                   success_{success} {}
 
-        void serialize(serialization::BufferWriter &writer) {
+        void serialize(serialization::BufferWriter &writer) const {
             writer.write_u64(task_id_);
             writer.write_u32(result_);
             writer.write_u8(success_);
@@ -158,32 +161,55 @@ namespace message {
         }
     };
 
-    struct AssignedReplicationMsg {
+    // Primary Coordinator -> Backup Coordinator
+    struct QueuedReplicationMsg {
         uint64_t task_id_;
         uint64_t queued_at_;
+        uint32_t client_id_;
 
-        uint32_t worker_id_;
+        explicit QueuedReplicationMsg() = default;
 
-        explicit AssignedReplicationMsg() = default;
+        explicit QueuedReplicationMsg(uint64_t task_id_, uint64_t queued_at, uint32_t client_id)
+            : task_id_{task_id_},
+              queued_at_{queued_at},
+              client_id_{client_id} {}
 
-        explicit AssignedReplicationMsg(uint64_t task_id_, uint64_t queued_at, uint32_t worker_id)
-                : task_id_{task_id_},
-                  queued_at_{queued_at},
-                  worker_id_{worker_id} {}
-
-        void serialize(serialization::BufferWriter &writer) {
+        void serialize(serialization::BufferWriter &writer) const {
             writer.write_u64(task_id_);
             writer.write_u64(queued_at_);
-            writer.write_u32(worker_id_);
+            writer.write_u32(client_id_);
         }
 
         void deserialize(serialization::BufferReader &reader) {
             task_id_ = reader.read_u64();
             queued_at_ = reader.read_u64();
+            client_id_ = reader.read_u32();
+        }
+    };
+
+    // Primary Coordinator -> Backup Coordinator
+    struct AssignedReplicationMsg {
+        uint64_t task_id_;
+        uint32_t worker_id_;
+
+        explicit AssignedReplicationMsg() = default;
+
+        explicit AssignedReplicationMsg(uint64_t task_id_, uint32_t worker_id)
+                : task_id_{task_id_},
+                  worker_id_{worker_id} {}
+
+        void serialize(serialization::BufferWriter &writer) const {
+            writer.write_u64(task_id_);
+            writer.write_u32(worker_id_);
+        }
+
+        void deserialize(serialization::BufferReader &reader) {
+            task_id_ = reader.read_u64();
             worker_id_ = reader.read_u32();
         }
     };
 
+    // Primary Coordinator -> Backup Coordinator
     struct CompletedReplicationMsg {
         uint64_t task_id_;
         uint64_t started_at_;
@@ -193,13 +219,14 @@ namespace message {
 
         explicit CompletedReplicationMsg() = default;
 
-        explicit CompletedReplicationMsg(uint64_t task_id, uint64_t started_at, uint64_t completed_at, uint32_t worker_id)
+        explicit CompletedReplicationMsg(uint64_t task_id, uint64_t started_at, uint64_t completed_at,
+                                         uint32_t worker_id)
                 : task_id_{task_id},
                   started_at_{started_at},
                   completed_at_{completed_at},
                   worker_id_{worker_id} {}
 
-        void serialize(serialization::BufferWriter &writer) {
+        void serialize(serialization::BufferWriter &writer) const {
             writer.write_u64(task_id_);
             writer.write_u64(started_at_);
             writer.write_u64(completed_at_);
@@ -214,6 +241,7 @@ namespace message {
         }
     };
 
+    // Worker -> Coordinator
     struct HeartBeatMsg {
         uint32_t worker_id_;
 
@@ -222,7 +250,25 @@ namespace message {
         explicit HeartBeatMsg(uint32_t worker_id)
                 : worker_id_{worker_id} {}
 
-        void serialize(serialization::BufferWriter &writer) {
+        void serialize(serialization::BufferWriter &writer) const {
+            writer.write_u32(worker_id_);
+        }
+
+        void deserialize(serialization::BufferReader &reader) {
+            worker_id_ = reader.read_u32();
+        }
+    };
+
+    // Coordinator -> Worker
+    struct AcknowledgeMsg {
+        uint32_t worker_id_;
+
+        explicit AcknowledgeMsg() = default;
+
+        explicit AcknowledgeMsg(uint32_t worker_id)
+                : worker_id_{worker_id} {}
+
+        void serialize(serialization::BufferWriter &writer) const {
             writer.write_u32(worker_id_);
         }
 
@@ -232,22 +278,22 @@ namespace message {
     };
 
     struct Message {
-        MessageType type_;
-
-        int router_fd_;
-
-        SubmitMsg submit_;
-        AssignMsg assign_;
-        CompleteMsg complete_;
-        ResultMsg result_;
-        AssignedReplicationMsg assigned_rep_;
-        CompletedReplicationMsg completed_rep_;
-        HeartBeatMsg heartbeat_;
+        MessageType type_{};
+        SubmitMsg submit_{};
+        AssignMsg assign_{};
+        CompleteMsg complete_{};
+        ResultMsg result_{};
+        QueuedReplicationMsg queued_rep_{};
+        AssignedReplicationMsg assigned_rep_{};
+        CompletedReplicationMsg completed_rep_{};
+        HeartBeatMsg heartbeat_{};
+        AcknowledgeMsg acknowledge_{};
 
         explicit Message() = default;
+
         explicit Message(MessageType type) : type_{type} {}
 
-        void serialize(serialization::BufferWriter& writer) {
+        void serialize(serialization::BufferWriter &writer) const {
             writer.write_u8(static_cast<uint8_t>(type_));
 
             switch (type_) {
@@ -263,6 +309,9 @@ namespace message {
                 case MessageType::RESULT:
                     result_.serialize(writer);
                     break;
+                case MessageType::QUEUED_REPLICATE:
+                    queued_rep_.serialize(writer);
+                    break;
                 case MessageType::ASSIGNED_REPLICATE:
                     assigned_rep_.serialize(writer);
                     break;
@@ -272,12 +321,15 @@ namespace message {
                 case MessageType::HEARTBEAT:
                     heartbeat_.serialize(writer);
                     break;
+                case MessageType::ACKNOWLEDGE:
+                    acknowledge_.serialize(writer);
+                    break;
                 default:
                     break;
             }
         }
 
-        void deserialize(serialization::BufferReader& reader) {
+        void deserialize(serialization::BufferReader &reader) {
             type_ = static_cast<MessageType>(reader.read_u8());
 
             switch (type_) {
@@ -293,6 +345,9 @@ namespace message {
                 case MessageType::RESULT:
                     result_.deserialize(reader);
                     break;
+                case MessageType::QUEUED_REPLICATE:
+                    queued_rep_.deserialize(reader);
+                    break;
                 case MessageType::ASSIGNED_REPLICATE:
                     assigned_rep_.deserialize(reader);
                     break;
@@ -301,6 +356,9 @@ namespace message {
                     break;
                 case MessageType::HEARTBEAT:
                     heartbeat_.deserialize(reader);
+                    break;
+                case MessageType::ACKNOWLEDGE:
+                    acknowledge_.deserialize(reader);
                     break;
                 default:
                     break;

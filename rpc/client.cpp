@@ -3,7 +3,6 @@
 
 #include "client.hpp"
 #include "../net/net_utils.hpp"
-#include "../serialization/buffer.hpp"
 
 namespace rpc {
     Client::Client(const std::string &ip, uint16_t port)
@@ -21,7 +20,7 @@ namespace rpc {
         }
     }
 
-    bool Client::send(const message::Message &msg) {
+    bool Client::send(const message::Message &msg) const {
         if (sock_fd_ < 0) {
             return false;
         }
@@ -29,11 +28,13 @@ namespace rpc {
         return net::send_message(sock_fd_, msg) > 0;
     }
 
-    bool Client::receive(message::Message &msg) {
+    bool Client::receive(message::Message &msg) const {
         if (sock_fd_ < 0) {
             return false;
         }
 
         return net::receive_message(sock_fd_, msg) > 0;
     }
+
+    int Client::fd() const { return sock_fd_; }
 } // namespace rpc

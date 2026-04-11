@@ -4,7 +4,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
-#include <stdio.h>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -90,7 +90,7 @@ namespace serialization {
 
         uint8_t read_u8() {
             assert(buffer_ + offset_ + sizeof(uint8_t) <= end_);
-            uint8_t val = static_cast<uint8_t>(*(buffer_ + offset_));
+            auto val = static_cast<uint8_t>(*(buffer_ + offset_));
             offset_ += 1;
             return val;
         }
@@ -123,7 +123,6 @@ namespace serialization {
         }
 
         std::string read_string() {
-            assert(buffer_ + offset_ + sizeof(val) <= end_);
             uint32_t size = read_u32();
             std::string s(buffer_ + offset_, size);
             offset_ += size;

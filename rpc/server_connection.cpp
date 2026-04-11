@@ -1,6 +1,7 @@
+#include <unistd.h>
+
 #include "server_connection.hpp"
 #include "../net/net_utils.hpp"
-#include "../serialization/buffer.hpp"
 
 namespace rpc {
 
@@ -18,7 +19,7 @@ namespace rpc {
         }
     }
 
-    bool ServerConnection::send(const message::Message &msg) {
+    bool ServerConnection::send(const message::Message &msg) const {
         if (fd_ < 0) {
             return false;
         }
@@ -26,7 +27,7 @@ namespace rpc {
         return net::send_message(fd_, msg) > 0;
     }
 
-    bool ServerConnection::receive(message::Message &msg) {
+    bool ServerConnection::receive(message::Message &msg) const {
         if (fd_ < 0) {
             return false;
         }

@@ -15,8 +15,8 @@ namespace rpc {
 
         void close_connection();
 
-        bool send(const message::Message &msg);
+        bool send(const message::Message &msg) const;
 
-        bool receive(message::Message &msg);
+        bool receive(message::Message &msg) const;
     };
 } // namespace rpc

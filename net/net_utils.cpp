@@ -1,18 +1,13 @@
 #include <arpa/inet.h>
 #include <cerrno>
-#include <csignal>
 #include <cstring>
-#include <net/if.h>
-#include <netdb.h>
 #include <netinet/tcp.h>
-#include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
 
 #include "net_utils.hpp"
-#include "../serialization/buffer.hpp"
 
 namespace net {
 
@@ -61,7 +56,7 @@ namespace net {
         }
 
         // Listen to incoming connections
-        if (listen(sock_fd, backlog) < 0) {
+        if (listen(sock_fd, static_cast<int>(backlog)) < 0) {
             close(sock_fd);
             return -1;
         }
@@ -117,9 +112,9 @@ namespace net {
 
         message.serialize(writer);
 
-        auto& buffer = writer.get_buffer();
+        auto &buffer = writer.get_buffer();
 
-        uint32_t payload_size = static_cast<uint32_t>(buffer.size() - sizeof(uint32_t));
+        auto payload_size = static_cast<uint32_t>(buffer.size() - sizeof(uint32_t));
         writer.write_payload_size(payload_size);
 
         return send_all(sock_fd, buffer.data(), buffer.size());
@@ -128,7 +123,7 @@ namespace net {
     int receive_message(int sock_fd, message::Message &message) {
         uint32_t encoded_size = 0;
 
-        int n = receive_all(sock_fd, reinterpret_cast<char*>(&encoded_size), sizeof(encoded_size));
+        int n = receive_all(sock_fd, reinterpret_cast<char *>(&encoded_size), sizeof(encoded_size));
 
         if (n <= 0) {
             return n;
