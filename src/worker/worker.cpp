@@ -2,10 +2,10 @@
 #include <poll.h>
 #include <limits>
 
-#include "worker.hpp"
-#include "../config/system_config.hpp"
-#include "../net/net_utils.hpp"
-#include "../utils/utils.hpp"
+#include "../../include/worker/worker.hpp"
+#include "../../include/config/system_config.hpp"
+#include "../../include/net/net_utils.hpp"
+#include "../../include/utils/utils.hpp"
 
 namespace worker {
 

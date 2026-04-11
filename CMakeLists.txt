@@ -3,13 +3,13 @@ project(distributed_coordinator)
 
 set(CMAKE_CXX_STANDARD 11)
 
-include_directories(src)
+include_directories(include)
 
 add_executable(worker
-        worker/main.cpp
-        worker/worker.cpp
-        net/net_utils.cpp
-        rpc/client.cpp
-        rpc/server_connection.cpp
-        coordinator/coordinator.cpp
+        src/worker/main.cpp
+        src/worker/worker.cpp
+        src/net/net_utils.cpp
+        src/rpc/client.cpp
+        src/rpc/server_connection.cpp
+        src/coordinator/coordinator.cpp
 )

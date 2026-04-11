@@ -1,5 +1,5 @@
-#include "coordinator.hpp"
-#include "../config/system_config.hpp"
+#include "../../include/coordinator/coordinator.hpp"
+#include "../../include/config/system_config.hpp"
 
 namespace coordinator {
 

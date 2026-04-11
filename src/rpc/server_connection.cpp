@@ -1,7 +1,7 @@
 #include <unistd.h>
 
-#include "server_connection.hpp"
-#include "../net/net_utils.hpp"
+#include "../../include/rpc/server_connection.hpp"
+#include "../../include/net/net_utils.hpp"
 
 namespace rpc {
 

@@ -1,8 +1,8 @@
 #include <unistd.h>
 #include <sys/socket.h>
 
-#include "client.hpp"
-#include "../net/net_utils.hpp"
+#include "../../include/rpc/client.hpp"
+#include "../../include/net/net_utils.hpp"
 
 namespace rpc {
     Client::Client(const std::string &ip, uint16_t port)
