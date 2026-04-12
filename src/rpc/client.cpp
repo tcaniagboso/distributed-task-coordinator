@@ -20,6 +20,10 @@ namespace rpc {
         }
     }
 
+    bool Client::connect(const std::string& ip, uint16_t port) {
+        sock_fd_ = net::connect_to_server(ip, port);
+        return sock_fd_ >= 0;
+    }
     bool Client::send(const message::Message &msg) const {
         if (sock_fd_ < 0) {
             return false;

@@ -31,7 +31,6 @@ namespace task {
 
     struct WordCountTask {
         std::string words_{};
-        uint32_t result_{};
 
         explicit WordCountTask() = default;
 
@@ -48,7 +47,7 @@ namespace task {
         uint32_t client_id_{};
         uint32_t worker_id_{};
 
-        int router_fd_{};
+        uint32_t result_{};
 
         uint8_t success_{};
 
@@ -66,7 +65,71 @@ namespace task {
                   client_id_{client_id},
                   type_{type},
                   state_{TaskState::QUEUED} {}
+
+        void serialize(serialization::BufferWriter &writer) const {
+            writer.write_u64(id_);
+            writer.write_u8(static_cast<uint8_t>(type_));
+            writer.write_u8(static_cast<uint8_t>(state_));
+            writer.write_u32(client_id_);
+            writer.write_u32(worker_id_);
+            writer.write_u64(queued_at_);
+
+            if (state_ == TaskState::RUNNING || state_ == TaskState::COMPLETED) {
+                writer.write_u64(started_at_);
+            }
+
+            if (state_ == TaskState::COMPLETED) {
+                writer.write_u64(completed_at_);
+                writer.write_u8(success_);
+
+                if (type_ == TaskType::WORD_COUNT) {
+                    writer.write_u32(result_);
+                }
+            }
+
+            switch (type_) {
+                case TaskType::SYNTHETIC:
+                    writer.write_u64(synthetic_task_.duration_us_);
+                    break;
+                case TaskType::WORD_COUNT:
+                    writer.write_string(word_count_task_.words_);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        void deserialize(serialization::BufferReader &reader) {
+            id_ = reader.read_u64();
+            type_ = static_cast<TaskType>(reader.read_u8());
+            state_ = static_cast<TaskState>(reader.read_u8());
+            client_id_ = reader.read_u32();
+            worker_id_ = reader.read_u32();
+            queued_at_ = reader.read_u64();
+
+            if (state_ == TaskState::RUNNING || state_ == TaskState::COMPLETED) {
+                started_at_ = reader.read_u64();
+            }
+
+            if (state_ == TaskState::COMPLETED) {
+                completed_at_ = reader.read_u64();
+                success_ = reader.read_u8();
+
+                if (type_ == TaskType::WORD_COUNT) {
+                    result_ = reader.read_u32();
+                }
+            }
+
+            switch (type_) {
+                case TaskType::SYNTHETIC:
+                    synthetic_task_.duration_us_ = reader.read_u64();
+                    break;
+                case TaskType::WORD_COUNT:
+                    word_count_task_.words_ = reader.read_string();
+                    break;
+                default:
+                    break;
+            }
+        }
     };
-
-
 } // namespace task

@@ -171,16 +171,14 @@ namespace worker {
 
                     // Assign task
                     size_t idx = next_worker_ % num_workers_;
-                    int retry_count = 0;
+                    int retry = 0;
                     if (msg.type_ != message::MessageType::ASSIGN) continue;
                     while (!task_queues_[idx]->try_push(msg.assign_)) {
                         std::this_thread::yield();
-                        if (retry_count >= config::RETRY_COUNT) {
+                        if (++retry > config::RETRY_COUNT) {
                             next_worker_++;
                             idx = next_worker_ % num_workers_;
-                            retry_count = 0;
-                        } else {
-                            retry_count++;
+                            retry = 0;
                         }
                     }
                     next_worker_++;
@@ -216,9 +214,9 @@ namespace worker {
 
     void Worker::run() {
 
-        running_.store(true);
+        running_.store(true, std::memory_order_release);
 
-        network_thread_ = std::thread(&Worker::network_worker, this);
+        network_thread_ = std::thread{&Worker::network_worker, this};
 
         for (int i = 0; i < num_workers_; i++) {
             execution_threads_.emplace_back(&Worker::execution_worker, this, i);

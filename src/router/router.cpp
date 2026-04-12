@@ -1,0 +1,150 @@
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "../../include/config/system_config.hpp"
+#include "../../include/net/net_utils.hpp"
+#include "../../include/router/router.hpp"
+#include "../../include/rpc/server_connection.hpp"
+
+namespace router {
+
+    Router::Router(uint16_t port, std::vector<RouterShardGroup> shards)
+            : listen_fd_{-1},
+              port_{port},
+              running_{false},
+              shards_{std::move(shards)},
+              workers_{} {}
+
+    Router::~Router() {
+        stop();
+    }
+
+    void Router::stop() {
+        if (running_.load(std::memory_order_acquire)) {
+            running_.store(false, std::memory_order_release);
+            if (listen_fd_ >= 0) {
+                close(listen_fd_);
+            }
+            // delay because worker vector is dynamic. what if increases?
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            for (auto &worker: workers_) {
+                if (worker.joinable()) worker.join();
+            }
+        }
+    }
+
+    bool Router::try_connection(rpc::Client &connection, const Endpoint &endpoint, const message::Message &request,
+                                message::Message &response) {
+        if (!connection.send(request)) {
+            if (!connection.connect(endpoint.ip_, endpoint.port_) || !connection.send(request)) {
+                return false;
+            }
+        }
+
+        if (!connection.receive(response)) {
+            if (!connection.connect(endpoint.ip_, endpoint.port_)) {
+                return false;
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    void Router::worker(int fd) {
+        rpc::ServerConnection server{fd};
+        auto &shards = shards_;
+        auto num_shards = shards.size();
+        std::vector<ThreadShard> shard_connections;
+        shard_connections.reserve(shards.size());
+
+        // use id here?
+        size_t routing_index = std::hash<std::thread::id>{}(std::this_thread::get_id()) % num_shards;
+
+        for (const auto &shard: shards) {
+            shard_connections.emplace_back(shard.primary_, shard.backup_);
+        }
+
+        while (running_.load(std::memory_order_acquire)) {
+            message::Message client_msg;
+            message::Message result_msg;
+
+            if (!server.receive(client_msg)) {
+                break;
+            }
+
+            bool sent = false;
+
+            for (size_t attempt = 0; attempt < num_shards && !sent; attempt++) {
+                auto idx = (routing_index + attempt) % num_shards;
+                auto &shard = shards[idx];
+                auto &primary_endpoint = shard.primary_;
+                auto &backup_endpoint = shard.backup_;
+                auto &primary = shard_connections[idx].primary_;
+                auto &backup = shard_connections[idx].backup_;
+                auto current = shard.active_target_.load(std::memory_order_acquire);
+                if (current == ActiveTarget::PRIMARY) {
+                    if (!try_connection(primary, primary_endpoint, client_msg, result_msg)) {
+                        if (try_connection(backup, backup_endpoint, client_msg, result_msg)) {
+                            ActiveTarget expected = ActiveTarget::PRIMARY;
+                            shard.active_target_.compare_exchange_strong(expected, ActiveTarget::BACKUP);
+                            sent = true;
+                        }
+                    } else {
+                        sent = true;
+                    }
+                } else {
+                    if (!try_connection(backup, backup_endpoint, client_msg, result_msg)) {
+                        if (try_connection(primary, primary_endpoint, client_msg, result_msg)) {
+                            ActiveTarget expected = ActiveTarget::BACKUP;
+                            shard.active_target_.compare_exchange_strong(expected, ActiveTarget::PRIMARY);
+                            sent = true;
+                        }
+                    } else {
+                        sent = true;
+                    }
+                }
+            }
+
+            if (!sent) {
+                break;
+            }
+
+            routing_index = (routing_index + 1) % num_shards;
+
+            if (!server.send(result_msg)) {
+                break;
+            }
+        }
+
+        server.close_connection();
+
+        for (auto &connections: shard_connections) {
+            connections.close_connections();
+        }
+    }
+
+    void Router::run() {
+        running_.store(true, std::memory_order_release);
+        listen_fd_ = net::create_listening_socket(port_, config::BACKLOG);
+        if (listen_fd_ < 0) return;
+
+        struct sockaddr_in addr{};
+        socklen_t addr_len{sizeof(addr)};
+
+        while (running_.load(std::memory_order_acquire)) {
+            addr_len = sizeof(addr);
+            int accepted_fd = accept(listen_fd_, reinterpret_cast<sockaddr *>(&addr), &addr_len);
+            if (accepted_fd < 0) {
+                continue;
+            }
+
+            workers_.emplace_back(&Router::worker, this, accepted_fd);
+        }
+
+        if (listen_fd_ >= 0) {
+            close(listen_fd_);
+        }
+    }
+
+} // namespace router
