@@ -1,17 +1,18 @@
 #include <algorithm>
+#include <iostream>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include "../../include/coordinator/coordinator.hpp"
-#include "../../include/config/system_config.hpp"
 #include "../../include/net/net_utils.hpp"
 
 namespace coordinator {
 
-    Coordinator::Coordinator(uint16_t port, coordinator::PeerNode peer)
+    Coordinator::Coordinator(uint16_t port, coordinator::PeerNode &&peer)
             : last_sweep_{},
               current_epoch_{0},
+              rr_index_{},
               replication_start_index_{0},
               port_{port},
               is_primary_{false},
@@ -26,8 +27,8 @@ namespace coordinator {
               replication_log_{},
               queued_backlog_{},
               completed_backlog_{},
-              worker_ring_{},
-              workers_{},
+              workers_states_{},
+              active_workers_{},
               available_ids_{},
               peer_{std::move(peer)} {}
 
@@ -62,8 +63,16 @@ namespace coordinator {
         }
     }
 
+    void Coordinator::mark_inactive(uint32_t worker_id) {
+        auto active_index = workers_states_[worker_id].active_index_;
+        auto last_worker_id = active_workers_.back();
+        std::swap(active_workers_[active_index], active_workers_.back());
+        active_workers_.pop_back();
+        workers_states_[last_worker_id].active_index_ = active_index;
+    }
+
     bool Coordinator::is_alive(uint32_t worker_id) {
-        auto &state = workers_[worker_id];
+        auto &state = workers_states_[worker_id];
 
         if (!state.alive_) {
             return false;
@@ -74,11 +83,11 @@ namespace coordinator {
         if (now - state.last_heartbeat_ns_ <= config::HEARTBEAT_TIMEOUT_NS) return true;
 
         if (state.alive_) {
+            mark_inactive(worker_id);
             available_ids_.push_back(worker_id);
         }
 
-        state.alive_ = false;
-        state.fd_ = -1;
+        state.mark_dead();
 
         auto &running_tasks = state.running_tasks_;
 
@@ -94,7 +103,7 @@ namespace coordinator {
     }
 
     void Coordinator::sweep_workers() {
-        auto worker_count = static_cast<uint32_t>(workers_.size());
+        auto worker_count = static_cast<uint32_t>(workers_states_.size());
 
         for (uint32_t worker_id = 0; worker_id < worker_count; worker_id++) {
             is_alive(worker_id);
@@ -118,14 +127,15 @@ namespace coordinator {
     bool Coordinator::assign(task::Task &task) {
         bool assigned = false;
 
-        while (!worker_ring_.empty()) {
-            auto worker_id = worker_ring_.front();
-            if (!is_alive(worker_id)) {
-                worker_ring_.pop_front();
+        uint32_t num_active = active_workers_.size();
+        for (uint32_t i = 0; i < num_active; i++) {
+            size_t active_idx = (rr_index_ + i) % active_workers_.size();
+            auto worker_id = active_workers_[active_idx];
+            if (workers_states_[worker_id].running_tasks_.size() >= config::MAX_QUEUE_DEPTH) {
                 continue;
             }
 
-            auto &worker_state = workers_[worker_id];
+            auto &worker_state = workers_states_[worker_id];
             message::Message msg{message::MessageType::ASSIGN};
             msg.assign_.type_ = task.type_;
             msg.assign_.task_id_ = task.id_;
@@ -144,6 +154,12 @@ namespace coordinator {
             // Try sending outgoing event
             OutgoingEvent event{worker_state.fd_, msg};
             if (!try_push_outgoing(event)) return false;
+
+            if (config::DEBUG) {
+                std::cout << "Assigning task " << task.id_ << " to worker\n";
+            }
+
+            rr_index_ = (active_idx + 1) % active_workers_.size(); // Increment when we actually assign
 
             // Update states
             task.worker_id_ = worker_id;
@@ -169,11 +185,6 @@ namespace coordinator {
             }
 
             add_to_log(assign_rep);
-            worker_ring_.pop_front();
-
-            if (worker_state.running_tasks_.size() < config::MAX_QUEUE_DEPTH) {
-                worker_ring_.push_back(worker_id);
-            }
 
             assigned = true;
             break;
@@ -272,9 +283,8 @@ namespace coordinator {
         task.state_ = task::TaskState::COMPLETED;
         task.success_ = complete_msg.success_;
 
-        auto &worker_state = workers_[task.worker_id_];
+        auto &worker_state = workers_states_[task.worker_id_];
         worker_state.running_tasks_.erase(task.id_);
-        worker_ring_.push_back(task.worker_id_);
 
         switch (task.type_) {
             case task::TaskType::WORD_COUNT:
@@ -343,7 +353,7 @@ namespace coordinator {
     void Coordinator::process_heartbeat_event(const coordinator::IncomingEvent &event) {
         const auto &msg = event.msg_.heartbeat_;
 
-        auto &state = workers_[msg.worker_id_];
+        auto &state = workers_states_[msg.worker_id_];
         state.last_heartbeat_ns_ = utils::now_ns_u64();
         state.alive_ = true;
     }
@@ -353,7 +363,7 @@ namespace coordinator {
         if (!available_ids_.empty()) {
             worker_id = available_ids_.back();
         } else {
-            worker_id = static_cast<uint32_t>(workers_.size());
+            worker_id = static_cast<uint32_t>(workers_states_.size());
         }
 
         message::Message msg{message::MessageType::ACKNOWLEDGE};
@@ -363,18 +373,19 @@ namespace coordinator {
 
         if (!available_ids_.empty()) {
             available_ids_.pop_back();
-            auto &state = workers_[worker_id];
+            auto &state = workers_states_[worker_id];
             state.alive_ = true;
             state.last_heartbeat_ns_ = utils::now_ns_u64();
             state.fd_ = event.fd_;
         } else {
-            workers_.emplace_back(event.fd_);
-            auto &state = workers_[worker_id];
+            workers_states_.emplace_back(event.fd_);
+            auto &state = workers_states_[worker_id];
             state.alive_ = true;
             state.last_heartbeat_ns_ = utils::now_ns_u64();
         }
 
-        worker_ring_.push_back(worker_id);
+        workers_states_[worker_id].active_index_ = active_workers_.size();
+        active_workers_.push_back(worker_id);
     }
 
     void Coordinator::process_snapshot_event(const coordinator::IncomingEvent &event) {
@@ -385,7 +396,7 @@ namespace coordinator {
 
         queued_backlog_.clear();
         completed_backlog_.clear();
-        worker_ring_.clear();
+        active_workers_.clear();
         early_complete_reps_.clear();
         available_ids_.clear();
         replication_log_.clear();
@@ -443,6 +454,8 @@ namespace coordinator {
                     process_peer_reconnected();
                     break;
                 default:
+                    std::cerr << "Unknown message type: "
+                              << static_cast<int>(event.msg_.type_) << "\n";
                     break;
             }
 
@@ -547,12 +560,10 @@ namespace coordinator {
                     // New connection
                     if (pfd.fd == listen_fd) {
 
-                        while (true) {
-                            int fd = accept(listen_fd, nullptr, nullptr);
-                            if (fd < 0) break;
+                        int fd = accept(listen_fd, nullptr, nullptr);
+                        if (fd >= 0) {
                             conns.push_back(fd);
                         }
-
                         continue;
                     }
 
@@ -566,11 +577,19 @@ namespace coordinator {
                         continue;
                     }
 
+                    if (config::DEBUG) {
+                        std::cout << "Coordinator received message from fd " << pfd.fd << "\n";
+                    }
+
                     IncomingEvent event{};
                     event.fd_ = pfd.fd;
                     event.msg_ = std::move(msg);
 
                     try_push_incoming(event);
+
+                    if (config::DEBUG) {
+                        std::cout << "Pushed to incoming queue\n";
+                    }
                 }
             }
 
@@ -594,20 +613,20 @@ namespace coordinator {
     }
 
     void Coordinator::stop() {
-        if (running_.load(std::memory_order_acquire)) {
-            running_.store(false, std::memory_order_release);
+        running_.store(false, std::memory_order_release);
 
-            if (network_thread_.joinable()) network_thread_.join();
+        if (network_thread_.joinable()) network_thread_.join();
 
-            if (scheduler_thread_.joinable()) scheduler_thread_.join();
-        }
+        if (scheduler_thread_.joinable()) scheduler_thread_.join();
     }
 
     void Coordinator::run() {
         running_.store(true, std::memory_order_release);
+
         network_thread_ = std::thread{&Coordinator::network_worker, this};
         scheduler_thread_ = std::thread{&Coordinator::scheduler_worker, this};
+
+        network_thread_.join();
+        scheduler_thread_.join();
     }
-
-
 } // namespace coordinator

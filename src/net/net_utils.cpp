@@ -16,12 +16,12 @@ namespace net {
         if (sock_fd < 0) return -1;
 
         // Timeout
-        struct timeval tv{};
-        tv.tv_sec = 0;
-        tv.tv_usec = 500000; // 500 ms
-
-        setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        setsockopt(sock_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+//        struct timeval tv{};
+//        tv.tv_sec = 0;
+//        tv.tv_usec = 500000; // 500 ms
+//
+//        setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+//        setsockopt(sock_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;

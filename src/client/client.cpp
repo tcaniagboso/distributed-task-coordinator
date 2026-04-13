@@ -21,8 +21,8 @@ namespace client {
               short_duration_{},
               num_clients_{num_clients},
               port_{port},
-              ip_{std::move(ip)},
               req_type_{req_type},
+              ip_{std::move(ip)},
               latencies_(num_clients) {
 
         clients_.reserve(num_clients);
@@ -117,7 +117,7 @@ namespace client {
         for (uint64_t task = 0; task < num_tasks_; task++) {
             uint64_t task_id = task_id_base + task;
 
-            message::Message request;
+            message::Message request{message::MessageType::SUBMIT};
             message::Message response;
 
             request.submit_.client_id_ = id;
@@ -143,8 +143,17 @@ namespace client {
                 }
             }
 
+            if (config::DEBUG) {
+                std::cout << "Sent task " << task_id << "\n";
+                std::cout << "Waiting for response " << task_id << "\n";
+            }
+
             if (!client.receive(response)) {
                 break;
+            }
+
+            if (config::DEBUG) {
+                std::cout << "Received result for task" << task_id << "\n";
             }
             auto end = std::chrono::steady_clock::now();
 

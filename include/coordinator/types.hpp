@@ -34,6 +34,7 @@ namespace coordinator {
 
     struct WorkerState {
         uint64_t last_heartbeat_ns_{utils::now_ns_u64()};
+        size_t active_index_{};
         int fd_{-1};
         bool alive_{true};
         std::unordered_set<uint64_t> running_tasks_{};

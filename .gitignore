@@ -3,7 +3,6 @@
 /cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
-Makefile
 
 # Compiled binaries
 *.out
@@ -12,6 +11,9 @@ Makefile
 *.a
 *.so
 *.dylib
+
+# Dependency files (Make)
+*.d
 
 # Debug / logs
 *.log
@@ -24,7 +26,7 @@ Thumbs.db
 .vscode/
 .idea/
 
-# macOS
+# macOS debug symbols
 *.dSYM/
 
 # Coverage

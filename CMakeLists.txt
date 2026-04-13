@@ -14,4 +14,7 @@ add_executable(worker
         src/coordinator/coordinator.cpp
         src/router/router.cpp
         src/client/client.cpp
+        src/client/main.cpp
+        src/coordinator/main.cpp
+        src/router/main.cpp
 )

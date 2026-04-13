@@ -1,11 +1,10 @@
 #include <cctype>
+#include <iostream>
 #include <poll.h>
 #include <limits>
 
 #include "../../include/worker/worker.hpp"
-#include "../../include/config/system_config.hpp"
 #include "../../include/net/net_utils.hpp"
-#include "../../include/utils/utils.hpp"
 
 namespace worker {
 
@@ -130,6 +129,9 @@ namespace worker {
                 std::this_thread::yield();
             }
 
+            if (config::DEBUG) {
+                std::cout << "Executing task " << task.task_id_ << "\n";
+            }
             switch (task.type_) {
                 case (task::TaskType::SYNTHETIC):
                     execute_synthetic(task, response);
@@ -143,6 +145,10 @@ namespace worker {
 
             while (!response_queues_[id]->try_push(response)) {
                 std::this_thread::yield();
+            }
+
+            if (config::DEBUG) {
+                std::cout << "Completed task " << task.task_id_ << "\n";
             }
         }
     }
@@ -193,7 +199,7 @@ namespace worker {
             }
 
             // Send responses
-            for (int i = 0; i < num_workers_; i++) {
+            for (size_t i = 0; i < num_workers_; i++) {
                 message::CompleteMsg response{};
                 while (response_queues_[i]->try_pop(response)) {
                     message::Message complete_msg{message::MessageType::COMPLETE};
@@ -220,27 +226,31 @@ namespace worker {
     }
 
     void Worker::run() {
-
         running_.store(true, std::memory_order_release);
 
         network_thread_ = std::thread{&Worker::network_worker, this};
 
-        for (int i = 0; i < num_workers_; i++) {
+        for (size_t i = 0; i < num_workers_; i++) {
             execution_threads_.emplace_back(&Worker::execution_worker, this, i);
         }
+
+
+        for (auto &t: execution_threads_) {
+            t.join();
+        }
+
+        network_thread_.join();
     }
 
     void Worker::stop() {
-        if (running_.load(std::memory_order_acquire)) {
-            running_.store(false, std::memory_order_release);
+        running_.store(false, std::memory_order_release);
 
-            if (network_thread_.joinable()) {
-                network_thread_.join();
-            }
+        if (network_thread_.joinable()) {
+            network_thread_.join();
+        }
 
-            for (auto &t: execution_threads_) {
-                if (t.joinable()) t.join();
-            }
+        for (auto &t: execution_threads_) {
+            if (t.joinable()) t.join();
         }
     }
 

@@ -17,6 +17,7 @@ namespace coordinator {
     private:
         uint64_t last_sweep_{};
         uint64_t current_epoch_{0};
+        size_t rr_index_{0};
         size_t replication_start_index_{0};
         uint16_t port_{};
 
@@ -37,11 +38,10 @@ namespace coordinator {
         std::deque<message::Message> replication_log_{};
         std::deque<uint64_t> queued_backlog_{};
         std::deque<uint64_t> completed_backlog_{};
-        std::deque<uint32_t> worker_ring_{};
 
-        std::vector<WorkerState> workers_{};
+        std::vector<WorkerState> workers_states_{};
+        std::vector<uint32_t> active_workers_{};
         std::vector<uint32_t> available_ids_{};
-
 
         PeerNode peer_;
 
@@ -49,6 +49,8 @@ namespace coordinator {
         bool try_push_incoming(const IncomingEvent& event);
 
         void add_to_log(const message::Message& msg);
+
+        void mark_inactive(uint32_t worker_id);
 
         bool is_alive(uint32_t worker_id);
 
@@ -79,9 +81,9 @@ namespace coordinator {
         void network_worker();
 
     public:
-        explicit Coordinator() = default;
+        explicit Coordinator() = delete;
 
-        explicit Coordinator(uint16_t port, PeerNode peer);
+        Coordinator(uint16_t port, PeerNode&& peer);
 
         ~Coordinator();
 

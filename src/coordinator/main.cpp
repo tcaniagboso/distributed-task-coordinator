@@ -3,30 +3,24 @@
 #include <cstring>
 #include <stdexcept>
 
-#include "../../include/config/system_config.hpp"
-#include "../../include/worker/worker.hpp"
+#include "../../include/coordinator/coordinator.hpp"
 
 void print_help() {
-    std::cout << "Usage: ./worker [OPTIONS]\n\n";
+    std::cout << "Usage: ./coordinator [OPTIONS]\n\n";
 
     std::cout << "Options:\n";
     std::cout << "  -p, --port <port>           Coordinator port (required)\n";
-    std::cout << "  -w, --workers <workers>     Number of worker threads (1-"
-              << config::MAX_WORKER_THREADS << ") (required)\n";
-    std::cout << "      --ip <address>          Coordinator IP (default: 127.0.0.1) (optional)\n";
+    std::cout << "      --peer <ip:port>        Peer node address (ip:port) (required)\n";
     std::cout << "  -h, --help                  Show this help message\n\n";
 
     std::cout << "Example:\n";
-    std::cout << "  ./worker -p 9000 -w 4\n";
+    std::cout << "  ./coordinator -p 9000 --peer 127.0.0.1:9001\n";
 }
 
 int main(int argc, char *argv[]) {
-    std::string ip = "127.0.0.1";
     uint16_t port{};
-    size_t workers{};
-
+    std::vector<coordinator::PeerNode> peers{};
     bool port_set{false};
-    bool workers_set{false};
 
     try {
         for (int i = 1; i < argc; i++) {
@@ -45,25 +39,17 @@ int main(int argc, char *argv[]) {
                 utils::validate_port(p);
                 port = static_cast<uint16_t>(p);
                 port_set = true;
-            } else if (std::strcmp(cur, "-w") == 0 || std::strcmp(cur, "--workers") == 0) {
+            } else if (std::strcmp(cur, "--peer") == 0) {
                 utils::validate_index(i + 1, argc, argv[i]);
-                try {
-                    workers = std::stoul(argv[++i]);
-                } catch (...) {
-                    throw std::invalid_argument("Invalid value for " + std::string(argv[i - 1]) + " (must be numeric)");
-                }
-                utils::validate_workers(workers);
-                workers_set = true;
-            } else if (std::strcmp(cur, "--ip") == 0) {
-                utils::validate_index(i + 1, argc, argv[i]);
-                ip = argv[++i];
+                auto endpoint = utils::parse_endpoint(argv[++i]);
+                peers.emplace_back(endpoint.first, endpoint.second);
             } else {
                 throw std::invalid_argument("Invalid argument: " + std::string(argv[i]));
             }
         }
 
-        if (!port_set || !workers_set) {
-            throw std::invalid_argument("Missing required options: --port, --workers");
+        if (!port_set || peers.size() != 1) {
+            throw std::invalid_argument("Missing required options: --port, --peer");
         }
 
     } catch (std::exception &e) {
@@ -72,8 +58,8 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    worker::Worker worker{ip, port, workers};
-    worker.run();
+    coordinator::Coordinator coordinator{port, std::move(peers.front())};
+    coordinator.run();
 
     return 0;
 }

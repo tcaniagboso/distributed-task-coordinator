@@ -1,3 +1,4 @@
+#include <iostream>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -20,16 +21,14 @@ namespace router {
     }
 
     void Router::stop() {
-        if (running_.load(std::memory_order_acquire)) {
-            running_.store(false, std::memory_order_release);
-            if (listen_fd_ >= 0) {
-                close(listen_fd_);
-            }
-            // delay because worker vector is dynamic. what if increases?
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            for (auto &worker: workers_) {
-                if (worker.joinable()) worker.join();
-            }
+        running_.store(false, std::memory_order_release);
+        if (listen_fd_ >= 0) {
+            close(listen_fd_);
+        }
+        // delay because worker vector is dynamic. what if increases?
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        for (auto &worker: workers_) {
+            if (worker.joinable()) worker.join();
         }
     }
 
@@ -41,11 +40,19 @@ namespace router {
             }
         }
 
+        if (config::DEBUG) {
+            std::cout << "Routed task " << request.submit_.task_id_ << "\n";
+        }
+
         if (!connection.receive(response)) {
             if (!connection.connect(endpoint.ip_, endpoint.port_)) {
                 return false;
             }
             return false;
+        }
+
+        if (config::DEBUG) {
+            std::cout << "Received result for task" << request.submit_.task_id_ << "\n";
         }
 
         return true;
