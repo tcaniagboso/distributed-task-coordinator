@@ -13,4 +13,5 @@ add_executable(worker
         src/rpc/server_connection.cpp
         src/coordinator/coordinator.cpp
         src/router/router.cpp
+        src/client/client.cpp
 )

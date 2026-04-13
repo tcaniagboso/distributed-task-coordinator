@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <string>
 
 namespace utils {
     using namespace std::chrono;

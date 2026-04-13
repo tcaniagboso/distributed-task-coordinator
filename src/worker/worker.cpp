@@ -29,7 +29,8 @@ namespace worker {
 
         for (size_t i = 0; i < num_workers; i++) {
             task_queues_.emplace_back(new lock_free::SPSCQueue<message::AssignMsg>(config::WORKER_QUEUE_CAPACITY));
-            response_queues_.emplace_back(new lock_free::SPSCQueue<message::CompleteMsg>(config::WORKER_QUEUE_CAPACITY));
+            response_queues_.emplace_back(
+                    new lock_free::SPSCQueue<message::CompleteMsg>(config::WORKER_QUEUE_CAPACITY));
         }
     }
 
@@ -71,7 +72,6 @@ namespace worker {
         return true;
     }
 
-
     void Worker::execute_synthetic(const message::AssignMsg &task, message::CompleteMsg &response) {
         response.task_id_ = task.task_id_;
         response.started_at_ = utils::now_ns_u64();
@@ -92,19 +92,26 @@ namespace worker {
 
         while (i < n) {
             // skip delimiters
-            while (i < n) {
-                auto c = static_cast<unsigned char>(words[i]);
-                if (!(std::isspace(c) || (std::ispunct(c) && c != '\''))) break;
+            while (i < n && !std::isalnum(static_cast<unsigned char>(words[i]))) {
                 i++;
             }
 
-            if (i < n) count++;
+            count += (i < n);
 
             // consume word
             while (i < n) {
                 auto c = static_cast<unsigned char>(words[i]);
-                if (std::isspace(c) || (std::ispunct(c) && c != '\'')) break;
-                i++;
+                if (std::isalnum(c)) {
+                    i++;
+                } else if (c == '\'') {
+                    if (i + 1 < n && std::isalnum(static_cast<unsigned char>(words[i + 1]))) {
+                        i++;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
             }
         }
 

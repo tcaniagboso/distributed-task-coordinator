@@ -17,4 +17,14 @@ namespace config {
 
     // Sockets config
     constexpr size_t BACKLOG = 256;
+
+    // Word count sizes (number of words)
+    constexpr size_t SHORT_TEXT_WORDS  = 10;
+    constexpr size_t MEDIUM_TEXT_WORDS = 100;
+    constexpr size_t LONG_TEXT_WORDS   = 1000;
+
+    // Synthetic durations (microseconds)
+    constexpr uint64_t SHORT_DURATION_US  = 100;
+    constexpr uint64_t MEDIUM_DURATION_US = 1000;
+    constexpr uint64_t LONG_DURATION_US   = 5000;
 } // namespace config
