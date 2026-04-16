@@ -18,9 +18,14 @@ namespace rpc {
         void close_connection();
 
         bool connect(const std::string& ip, uint16_t port);
-        bool send(const message::Message &msg) const;
 
-        bool receive(message::Message &msg) const;
+        int send(const message::Message &msg) const;
+
+        int receive(message::Message &msg) const;
+
+        int send_with_retry(const message::Message& msg, uint32_t retries) const;
+
+        int receive_with_retry(message::Message& msg, uint32_t retries) const;
 
         int fd() const;
     };

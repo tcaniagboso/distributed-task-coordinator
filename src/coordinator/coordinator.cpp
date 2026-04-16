@@ -13,58 +13,136 @@ namespace coordinator {
             : last_sweep_{},
               current_epoch_{0},
               rr_index_{},
-              replication_start_index_{0},
+              replication_read_ptr_{0},
+              replication_write_ptr_{0},
               port_{port},
               is_primary_{false},
               running_{false},
               network_thread_{},
               scheduler_thread_{},
-              incoming_queue_{new lock_free::SPSCQueue<IncomingEvent>(config::COORDINATOR_QUEUE_CAPACITY)},
-              outgoing_queue_{new lock_free::SPSCQueue<OutgoingEvent>(config::COORDINATOR_QUEUE_CAPACITY)},
+              control_queue_{new lock_free::SPSCQueue<IncomingEvent>(config::COORDINATOR_CONTROL_QUEUE_CAPACITY)},
+              task_queue_{new lock_free::SPSCQueue<IncomingEvent>(config::COORDINATOR_TASK_QUEUE_CAPACITY)},
+              outgoing_queue_{new lock_free::SPSCQueue<OutgoingEvent>(config::COORDINATOR_OUTGOING_QUEUE_CAPACITY)},
               tasks_{},
               client_fds_{},
               early_complete_reps_{},
-              replication_log_{},
+              replication_log_(config::MAX_LOG_SIZE),
               queued_backlog_{},
               completed_backlog_{},
               workers_states_{},
               active_workers_{},
               available_ids_{},
+              metrics_{},
               peer_{std::move(peer)} {}
 
     Coordinator::~Coordinator() {
         stop();
     }
 
-    bool Coordinator::try_push_outgoing(const coordinator::OutgoingEvent &event) {
-        int retry = 0;
-        while (!outgoing_queue_->try_push(event)) {
-            if (++retry > config::RETRY_COUNT) return false;
-            std::this_thread::yield();
+    bool Coordinator::try_pop_incoming(coordinator::IncomingEvent &event, lock_free::SPSCQueue<IncomingEvent> &queue) {
+        uint32_t retry = 0;
+        uint32_t backoff_us = 1;
+        while (!queue.try_pop(event)) {
+            if (++retry > config::QUEUE_RETRY_COUNT) return false;
+            std::this_thread::sleep_for(std::chrono::microseconds(backoff_us));
+            backoff_us = std::min(backoff_us << 1, config::MAX_BACKOFF_US);
         }
 
         return true;
     }
 
-    bool Coordinator::try_push_incoming(const IncomingEvent &event) {
-        int retry = 0;
-        while (!incoming_queue_->try_push(event)) {
-            if (++retry > config::RETRY_COUNT) return false;
-            std::this_thread::yield();
+    bool Coordinator::try_push_outgoing(const coordinator::OutgoingEvent &event,
+                                        lock_free::SPSCQueue<OutgoingEvent> &queue) {
+        uint32_t retry = 0;
+        uint32_t backoff_us = 1;
+        while (!queue.try_push(event)) {
+            if (++retry > config::QUEUE_RETRY_COUNT) return false;
+            std::this_thread::sleep_for(std::chrono::microseconds(backoff_us));
+            backoff_us = std::min(backoff_us << 1, config::MAX_BACKOFF_US);
         }
 
         return true;
+    }
+
+    bool Coordinator::try_push_incoming(const IncomingEvent &event, lock_free::SPSCQueue<IncomingEvent> &queue) {
+        uint32_t retry = 0;
+        uint32_t backoff_us = 1;
+        while (!queue.try_push(event)) {
+            if (++retry > config::QUEUE_RETRY_COUNT) return false;
+            std::this_thread::sleep_for(std::chrono::microseconds(backoff_us));
+            backoff_us <<= 1;
+            backoff_us = std::min(backoff_us, config::MAX_BACKOFF_US);
+        }
+
+        return true;
+    }
+
+    void Coordinator::record_enqueue(Metrics &metrics) {
+        metrics.tasks_queued_++;
+    }
+
+    void Coordinator::record_assignment(Metrics &metrics) {
+        // Update metrics
+        metrics.tasks_queued_ -= (metrics.tasks_queued_ > 0) ? 1 : 0;
+        metrics.tasks_running_++;
+    }
+
+    void Coordinator::record_completion_worker(WorkerState &worker_state, const task::Task &task) {
+        worker_state.tasks_completed_++;
+
+        uint64_t latency = task.completed_at_ - task.started_at_;
+        worker_state.total_latency_ns_ += latency;
+    }
+
+    void Coordinator::record_completion_system(Metrics &metrics, const task::Task &task) {
+        metrics.tasks_running_ -= (metrics.tasks_running_ > 0) ? 1 : 0;
+        metrics.tasks_completed_++;
+        uint64_t latency = task.completed_at_ - task.queued_at_;
+        metrics.latencies_.push_back(latency);
+
+        if (metrics.latencies_.size() > config::MAX_LATENCY_SAMPLES) {
+            metrics.latencies_.pop_front();
+        }
+
+        metrics.total_latency_ns += latency;
+
+        if (metrics.tasks_completed_ == 1) {
+            metrics.min_latency_ns = latency;
+        } else {
+            metrics.min_latency_ns = std::min(metrics.min_latency_ns, latency);
+        }
+
+        metrics.max_latency_ns = std::max(metrics.max_latency_ns, latency);
+        metrics.completion_times_ns_.push_back(task.completed_at_);
+    }
+
+    uint64_t Coordinator::get_rolling_throughput(Metrics &metrics) {
+        uint64_t now = utils::now_ns_u64();
+
+        while (!metrics.completion_times_ns_.empty() &&
+               now - metrics.completion_times_ns_.front() > config::THROUGHPUT_WINDOW_NS) {
+            metrics.completion_times_ns_.pop_front();
+        }
+
+        return metrics.completion_times_ns_.size();
     }
 
     void Coordinator::add_to_log(const message::Message &msg) {
-        replication_log_.push_back(msg);
-        if (replication_log_.size() > config::MAX_LOG_SIZE) {
-            replication_log_.pop_front();
+        size_t next = (replication_write_ptr_ + 1) % replication_log_.size();
+
+        // drop
+        if (next == replication_read_ptr_) {
+            replication_read_ptr_ = (replication_read_ptr_ + 1) % replication_log_.size();
         }
+
+        replication_log_[replication_write_ptr_] = msg;
+        replication_write_ptr_ = next;
     }
 
     void Coordinator::mark_inactive(uint32_t worker_id) {
+        if (active_workers_.empty()) return;
         auto active_index = workers_states_[worker_id].active_index_;
+        if (active_index >= active_workers_.size()) return;
         auto last_worker_id = active_workers_.back();
         std::swap(active_workers_[active_index], active_workers_.back());
         active_workers_.pop_back();
@@ -82,21 +160,18 @@ namespace coordinator {
 
         if (now - state.last_heartbeat_ns_ <= config::HEARTBEAT_TIMEOUT_NS) return true;
 
-        if (state.alive_) {
-            mark_inactive(worker_id);
-            available_ids_.push_back(worker_id);
-        }
+        mark_inactive(worker_id);
+        available_ids_.push_back(worker_id);
 
         state.mark_dead();
-
         auto &running_tasks = state.running_tasks_;
-
         while (!running_tasks.empty()) {
-            auto task_id = *running_tasks.begin();
-            auto &task = tasks_[task_id];
+            auto it = running_tasks.begin();
+            auto task_id = *it;
+            auto &task = tasks_.at(task_id);
             task.state_ = task::TaskState::QUEUED;
             queued_backlog_.push_back(task_id);
-            state.running_tasks_.erase(state.running_tasks_.begin());
+            state.running_tasks_.erase(it);
         }
 
         return false;
@@ -111,16 +186,15 @@ namespace coordinator {
     }
 
     void Coordinator::replicate() {
-        size_t num_operations = replication_log_.size();
-        while (replication_start_index_ < num_operations) {
-            const auto &msg = replication_log_[replication_start_index_];
+        while (replication_read_ptr_ != replication_write_ptr_) {
+            const auto &msg = replication_log_[replication_read_ptr_];
 
             OutgoingEvent event{};
             event.msg_ = msg;
 
-            if (!try_push_outgoing(event)) return;
+            if (!try_push_outgoing(event, *outgoing_queue_)) return;
 
-            replication_start_index_++;
+            replication_read_ptr_ = (replication_read_ptr_ + 1) % replication_log_.size();
         }
     }
 
@@ -131,7 +205,7 @@ namespace coordinator {
         for (uint32_t i = 0; i < num_active; i++) {
             size_t active_idx = (rr_index_ + i) % active_workers_.size();
             auto worker_id = active_workers_[active_idx];
-            if (workers_states_[worker_id].running_tasks_.size() >= config::MAX_QUEUE_DEPTH) {
+            if (workers_states_[worker_id].running_tasks_.size() >= config::WORKER_MAX_QUEUE_DEPTH) {
                 continue;
             }
 
@@ -153,7 +227,7 @@ namespace coordinator {
 
             // Try sending outgoing event
             OutgoingEvent event{worker_state.fd_, msg};
-            if (!try_push_outgoing(event)) return false;
+            if (!try_push_outgoing(event, *outgoing_queue_)) return false;
 
             if (config::DEBUG) {
                 std::cout << "Assigning task " << task.id_ << " to worker\n";
@@ -166,6 +240,8 @@ namespace coordinator {
             task.state_ = task::TaskState::RUNNING;
             task.started_at_ = utils::now_ns_u64();
             worker_state.running_tasks_.insert(task.id_);
+
+            record_assignment(metrics_);
 
             // Add assign operation for replication
             message::Message assign_rep{message::MessageType::ASSIGNED_REPLICATE};
@@ -197,7 +273,8 @@ namespace coordinator {
         message::Message msg{message::MessageType::RESULT};
         msg.result_.success_ = task.success_;
         msg.result_.task_id_ = task.id_;
-        msg.result_.result_ = task.result_;
+
+        if (task.type_ == task::TaskType::WORD_COUNT) msg.result_.result_ = task.result_;
         msg.epoch_ = current_epoch_;
 
         auto it = client_fds_.find(task.client_id_);
@@ -206,7 +283,7 @@ namespace coordinator {
             fd = it->second;
         }
         OutgoingEvent event{fd, msg};
-        if (!try_push_outgoing(event)) return false;
+        if (!try_push_outgoing(event, *outgoing_queue_)) return false;
 
         message::Message complete_rep{message::MessageType::COMPLETED_REPLICATE};
         complete_rep.epoch_ = current_epoch_;
@@ -265,6 +342,7 @@ namespace coordinator {
 
         tasks_[task.id_] = task;
         auto &stored_task = tasks_[task.id_];
+        record_enqueue(metrics_);
         if (!assign(stored_task)) {
             queued_backlog_.push_back(stored_task.id_);
         }
@@ -291,8 +369,13 @@ namespace coordinator {
                 task.result_ = complete_msg.result_;
                 break;
             default:
+                task.result_ = {};
                 break;
         }
+
+        // Update metrics
+        record_completion_system(metrics_, task);
+        record_completion_worker(worker_state, task);
 
         if (!send_result(task)) {
             completed_backlog_.push_back(task.id_);
@@ -323,6 +406,9 @@ namespace coordinator {
 
         tasks_[task.id_] = task;
 
+        // Update metrics
+        record_assignment(metrics_);
+
         auto it = early_complete_reps_.find(task.id_);
         if (it != early_complete_reps_.end()) {
             process_complete_replicate_event(it->second);
@@ -335,7 +421,8 @@ namespace coordinator {
         if (event.msg_.epoch_ < current_epoch_) return;
         const auto &completed_rep_msg = event.msg_.completed_rep_;
         auto it = tasks_.find(completed_rep_msg.task_id_);
-        if (it == tasks_.end()) {
+        // check completed for new client runs
+        if (it == tasks_.end() || it->second.state_ == task::TaskState::COMPLETED) {
             early_complete_reps_[completed_rep_msg.task_id_] = event;
             return;
         }
@@ -348,9 +435,12 @@ namespace coordinator {
         task.completed_at_ = completed_rep_msg.completed_at_;
         task.success_ = completed_rep_msg.success_;
         task.result_ = completed_rep_msg.result_;
+
+        // Update metrics
+        record_completion_system(metrics_, task);
     }
 
-    void Coordinator::process_heartbeat_event(const coordinator::IncomingEvent &event) {
+    void Coordinator::process_heartbeat_event(const IncomingEvent &event) {
         const auto &msg = event.msg_.heartbeat_;
 
         auto &state = workers_states_[msg.worker_id_];
@@ -358,7 +448,7 @@ namespace coordinator {
         state.alive_ = true;
     }
 
-    void Coordinator::process_register_event(const coordinator::IncomingEvent &event) {
+    void Coordinator::process_register_event(const IncomingEvent &event) {
         uint32_t worker_id;
         if (!available_ids_.empty()) {
             worker_id = available_ids_.back();
@@ -369,7 +459,7 @@ namespace coordinator {
         message::Message msg{message::MessageType::ACKNOWLEDGE};
         msg.acknowledge_ = message::AcknowledgeMsg{worker_id};
         OutgoingEvent out_event{event.fd_, msg};
-        if (!try_push_outgoing(out_event)) return;
+        if (!try_push_outgoing(out_event, *outgoing_queue_)) return;
 
         if (!available_ids_.empty()) {
             available_ids_.pop_back();
@@ -388,10 +478,10 @@ namespace coordinator {
         active_workers_.push_back(worker_id);
     }
 
-    void Coordinator::process_snapshot_event(const coordinator::IncomingEvent &event) {
+    void Coordinator::process_snapshot_event(const IncomingEvent &event) {
         is_primary_ = false;
         current_epoch_ = event.msg_.epoch_;
-        replication_start_index_ = 0;
+        replication_read_ptr_ = 0;
         tasks_ = event.msg_.snapshot_.tasks_;
 
         queued_backlog_.clear();
@@ -412,22 +502,122 @@ namespace coordinator {
         OutgoingEvent event{};
         event.msg_ = msg;
 
-        if (!try_push_outgoing(event)) return;
+        if (!try_push_outgoing(event, *outgoing_queue_)) return;
     }
 
-    void Coordinator::scheduler_worker() {
-        while (running_.load(std::memory_order_acquire)) {
-            if (is_primary_) {
-                replicate();
-                process_backlog();
+    void Coordinator::process_top_request(const IncomingEvent &event) {
+        message::Message msg{message::MessageType::TOP_RESPONSE};
+
+        auto &coordinator_metrics = msg.top_response_.coordinator_metrics_;
+
+        // ---- Copy latencies for percentile computation ----
+        std::vector<uint64_t> copy(metrics_.latencies_.begin(), metrics_.latencies_.end());
+
+        if (!copy.empty()) {
+            size_t size = copy.size();
+
+            // ---- p95 ----
+            size_t p95_idx = (size * 95) / 100;
+            std::nth_element(copy.begin(), copy.begin() + p95_idx, copy.end());
+            coordinator_metrics.p95_latency_us_ = copy[p95_idx] / 1000;
+
+            // ---- min / max (use minmax_element instead of nth_element again) ----
+            std::pair<std::vector<uint64_t>::iterator, std::vector<uint64_t>::iterator> minmax =
+                    std::minmax_element(copy.begin(), copy.end());
+
+            coordinator_metrics.min_latency_us_ = *minmax.first / 1000;
+            coordinator_metrics.max_latency_us_ = *minmax.second / 1000;
+        } else {
+            coordinator_metrics.p95_latency_us_ = 0;
+            coordinator_metrics.min_latency_us_ = 0;
+            coordinator_metrics.max_latency_us_ = 0;
+        }
+
+        // ---- avg latency (guard divide-by-zero) ----
+        if (metrics_.tasks_completed_ > 0) {
+            coordinator_metrics.avg_latency_us_ =
+                    metrics_.total_latency_ns / (metrics_.tasks_completed_ * 1000);
+        } else {
+            coordinator_metrics.avg_latency_us_ = 0;
+        }
+
+        // ---- basic counters ----
+        coordinator_metrics.tasks_completed_ = metrics_.tasks_completed_;
+        coordinator_metrics.tasks_running_ = metrics_.tasks_running_;
+        coordinator_metrics.tasks_queued_ = metrics_.tasks_queued_;
+
+        coordinator_metrics.throughput_ = get_rolling_throughput(metrics_);
+        coordinator_metrics.active_workers_ = active_workers_.size();
+        coordinator_metrics.is_primary_ = static_cast<uint8_t>(is_primary_);
+
+        // ---- worker metrics ----
+        auto &workers_metrics = msg.top_response_.workers_metrics_;
+
+        uint64_t now = utils::now_ns_u64();  // compute once
+
+        size_t num_workers = workers_states_.size();
+        for (size_t id = 0; id < num_workers; id++) {
+            const auto &worker_state = workers_states_[id];
+            top::WorkerMetrics worker_metrics{};
+
+            // avg latency (guard divide-by-zero)
+            if (worker_state.tasks_completed_ > 0) {
+                worker_metrics.avg_latency_us_ =
+                        worker_state.total_latency_ns_ / (worker_state.tasks_completed_ * 1000);
+            } else {
+                worker_metrics.avg_latency_us_ = 0;
             }
 
-            IncomingEvent event{};
-            if (!incoming_queue_->try_pop(event)) {
-                std::this_thread::yield();
-                continue;
-            }
+            worker_metrics.tasks_completed_ = worker_state.tasks_completed_;
+            worker_metrics.tasks_running_ = worker_state.running_tasks_.size();
 
+            // correct heartbeat: delta, not absolute
+            worker_metrics.last_heartbeat_ms_ =
+                    (now - worker_state.last_heartbeat_ns_) / 1000000;
+
+            worker_metrics.worker_id_ = id;
+            worker_metrics.alive_ = static_cast<uint8_t>(worker_state.alive_);
+
+            workers_metrics.push_back(worker_metrics);
+        }
+
+        // ---- send response (blocking with backoff) ----
+        OutgoingEvent out(event.fd_, msg);
+        uint32_t backoff_us = 1;
+        while (!try_push_outgoing(out, *outgoing_queue_)) {
+            std::this_thread::sleep_for(std::chrono::microseconds(backoff_us));
+            backoff_us = std::min(backoff_us << 1, config::MAX_BACKOFF_US);
+        }
+    }
+
+    void Coordinator::process_control_queue(lock_free::SPSCQueue<IncomingEvent> &queue) {
+        uint64_t processed = 0;
+        IncomingEvent event{};
+        while (processed < config::CONTROL_BUDGET && try_pop_incoming(event, queue)) {
+            switch (event.msg_.type_) {
+                case message::MessageType::HEARTBEAT:
+                    process_heartbeat_event(event);
+                    processed++;
+                    break;
+                case message::MessageType::REGISTER:
+                    process_register_event(event);
+                    processed++;
+                    break;
+                default:
+                    std::cerr << "Unknown message type: "
+                              << static_cast<int>(event.msg_.type_) << "\n";
+                    break;
+            }
+        }
+    }
+
+    void Coordinator::process_task_queue(lock_free::SPSCQueue<IncomingEvent> &queue) {
+        uint64_t limit = active_workers_.empty() ?
+                         config::TASK_FALLBACK_BUDGET :
+                         1ULL * active_workers_.size() * config::WORKER_MAX_QUEUE_DEPTH;
+        uint64_t processed = 0;
+        IncomingEvent event{};
+        while (processed < limit && try_pop_incoming(event, queue)) {
             switch (event.msg_.type_) {
                 case message::MessageType::SUBMIT:
                     process_submit_event(event);
@@ -441,23 +631,33 @@ namespace coordinator {
                 case message::MessageType::COMPLETED_REPLICATE:
                     process_complete_replicate_event(event);
                     break;
-                case message::MessageType::HEARTBEAT:
-                    process_heartbeat_event(event);
-                    break;
-                case message::MessageType::REGISTER:
-                    process_register_event(event);
-                    break;
                 case message::MessageType::SNAPSHOT:
                     process_snapshot_event(event);
                     break;
                 case message::MessageType::PEER_RECONNECTED:
                     process_peer_reconnected();
                     break;
+                case message::MessageType::TOP_REQUEST:
+                    process_top_request(event);
+                    break;
                 default:
                     std::cerr << "Unknown message type: "
                               << static_cast<int>(event.msg_.type_) << "\n";
                     break;
             }
+            processed++;
+        }
+    }
+
+    void Coordinator::scheduler_worker() {
+        while (running_.load(std::memory_order_acquire)) {
+            if (is_primary_) {
+                process_backlog();
+                replicate();
+            }
+
+            process_control_queue(*control_queue_);
+            process_task_queue(*task_queue_);
 
             auto now = utils::now_ns_u64();
             if (now - last_sweep_ >= config::SWEEP_INTERVAL_NS) {
@@ -484,7 +684,7 @@ namespace coordinator {
             IncomingEvent event{};
             event.msg_ = msg;
 
-            if (!try_push_incoming(event)) return;
+            if (!try_push_incoming(event, *task_queue_)) return;
 
             peer.alive_ = true;
         }
@@ -496,10 +696,20 @@ namespace coordinator {
             return;
         }
 
-        if (net::send_message(peer.connection_->fd(), event.msg_) <= 0) {
+        if (net::send_message_with_retry(peer.connection_->fd(), event.msg_, config::CONNECTION_RETRY_COUNT) <= 0) {
             peer.alive_ = false;
             peer.connection_ = nullptr;
             reconnect_to_peer(peer);
+        }
+    }
+
+    bool Coordinator::communicate_incoming_event(const IncomingEvent &event) {
+        switch (event.msg_.type_) {
+            case message::MessageType::HEARTBEAT:
+            case message::MessageType::REGISTER:
+                return try_push_incoming(event, *control_queue_);
+            default:
+                return try_push_incoming(event, *task_queue_);
         }
     }
 
@@ -507,6 +717,8 @@ namespace coordinator {
 
         int listen_fd = net::create_listening_socket(port_, config::BACKLOG);
         if (listen_fd < 0) return;
+
+        std::deque<IncomingEvent> backlog;
 
         std::vector<int> conns;
         std::vector<pollfd> pfds;
@@ -517,6 +729,13 @@ namespace coordinator {
         }
 
         while (running_.load(std::memory_order_acquire)) {
+
+            // Process backlog
+            int backlog_budget = 64;
+            while (!backlog.empty() && backlog_budget--) {
+                if (!communicate_incoming_event(backlog.front())) break;
+                backlog.pop_front();
+            }
 
             // Build Poll set
             pfds.clear();
@@ -535,7 +754,7 @@ namespace coordinator {
             }
 
             // POLL
-            int ret = poll(pfds.data(), pfds.size(), 10);
+            int ret = poll(pfds.data(), pfds.size(), 1);
 
             if (ret > 0) {
 
@@ -569,11 +788,14 @@ namespace coordinator {
 
                     // Existing connection
                     message::Message msg{};
-                    int n = net::receive_message(pfd.fd, msg);
+                    int n = net::receive_message_with_retry(pfd.fd, msg, config::CONNECTION_RETRY_COUNT);
 
-                    if (n <= 0) {
+                    if (n == -1) {
                         close(pfd.fd);
                         conns.erase(std::remove(conns.begin(), conns.end(), pfd.fd), conns.end());
+                        continue;
+                    } else if (n == -3) {
+                        // invalid message size
                         continue;
                     }
 
@@ -585,10 +807,12 @@ namespace coordinator {
                     event.fd_ = pfd.fd;
                     event.msg_ = std::move(msg);
 
-                    try_push_incoming(event);
+                    if (!communicate_incoming_event(event)) {
+                        backlog.push_back(event);
+                    }
 
                     if (config::DEBUG) {
-                        std::cout << "Pushed to incoming queue\n";
+                        std::cout << "Tried Pushing to incoming queue\n";
                     }
                 }
             }
@@ -596,20 +820,23 @@ namespace coordinator {
 
 
             // Outgoing
+            size_t processed = 0;
             OutgoingEvent out{};
-            while (outgoing_queue_->try_pop(out)) {
-
+            while (processed < config::COORDINATOR_OUT_BUDGET && outgoing_queue_->try_pop(out)) {
                 if (out.msg_.is_replication()) {
                     send_replication_message(out, peer_);
                 } else {
                     if (out.fd_ >= 0) {
-                        net::send_message(out.fd_, out.msg_);
+                        // If we can't send then worker or router is dead
+                        net::send_message_with_retry(out.fd_, out.msg_, config::CONNECTION_RETRY_COUNT);
                     }
                 }
+                processed++;
             }
         }
 
         close(listen_fd);
+        running_.store(false, std::memory_order_release);
     }
 
     void Coordinator::stop() {

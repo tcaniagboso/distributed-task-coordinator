@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -33,6 +34,8 @@ namespace coordinator {
     };
 
     struct WorkerState {
+        uint64_t tasks_completed_{0};
+        uint64_t total_latency_ns_{0};
         uint64_t last_heartbeat_ns_{utils::now_ns_u64()};
         size_t active_index_{};
         int fd_{-1};
@@ -63,5 +66,19 @@ namespace coordinator {
               port_{port},
               alive_{false},
               connection_{nullptr} {}
+    };
+
+    struct Metrics {
+        uint64_t total_latency_ns{0};
+        uint64_t tasks_completed_{0};
+        uint64_t tasks_queued_{0};
+        uint64_t tasks_running_{0};
+        uint64_t min_latency_ns{0};
+        uint64_t max_latency_ns{0};
+
+        std::deque<uint64_t> latencies_{};
+        std::deque<uint64_t> completion_times_ns_{};
+
+        explicit Metrics() = default;
     };
 } // namespace coordinator

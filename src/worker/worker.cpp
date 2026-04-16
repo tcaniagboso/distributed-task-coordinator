@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cctype>
 #include <iostream>
 #include <poll.h>
@@ -12,6 +13,7 @@ namespace worker {
             : next_worker_{0},
               last_heartbeat_ns_{utils::now_ns_u64()},
               num_workers_{num_workers},
+              last_start_{0},
               id_{std::numeric_limits<uint32_t>::max()},
               port_{port},
               running_{false},
@@ -37,34 +39,36 @@ namespace worker {
         stop();
     }
 
-    void Worker::connect() {
+    bool Worker::connect() {
         int backoff_ms = 10;
 
-        while (true) {
+        for (uint32_t retry = 0; retry < config::REGISTER_RETRY_COUNT; retry++){
             connection_.reset(new rpc::Client{ip_, port_});
 
             if (connection_->fd() >= 0) {
                 if (register_with_server()) {
-                    return;
+                    return true;
                 }
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
             backoff_ms = std::min(backoff_ms * 2, 1000);
         }
+
+        return false;
     }
 
     bool Worker::register_with_server() {
         message::Message register_msg{message::MessageType::REGISTER};
 
-        bool result = connection_->send(register_msg);
+        int result = connection_->send_with_retry(register_msg, config::CONNECTION_RETRY_COUNT);
 
-        if (!result) return false;
+        if (result <= 0) return false;
 
         message::Message ack_message;
-        result = connection_->receive(ack_message);
+        result = connection_->receive_with_retry(ack_message, config::CONNECTION_RETRY_COUNT);
 
-        if (!result) return false;
+        if (result <= 0) return false;
 
         id_ = ack_message.acknowledge_.worker_id_;
         last_heartbeat_ns_ = utils::now_ns_u64(); // if we register that is a heartbeat
@@ -125,9 +129,13 @@ namespace worker {
             message::AssignMsg task{};
             message::CompleteMsg response{};
 
-            while (!task_queues_[id]->try_pop(task)) {
-                std::this_thread::yield();
+            uint32_t backoff_us = 1;
+            while (running_.load(std::memory_order_acquire) && !task_queues_[id]->try_pop(task)) {
+                std::this_thread::sleep_for(std::chrono::microseconds(backoff_us));
+                backoff_us = std::min(backoff_us << 1, config::MAX_BACKOFF_US);
             }
+
+            if (!running_.load(std::memory_order_acquire)) break;
 
             if (config::DEBUG) {
                 std::cout << "Executing task " << task.task_id_ << "\n";
@@ -143,8 +151,10 @@ namespace worker {
                     break;
             }
 
+            backoff_us = 1;
             while (!response_queues_[id]->try_push(response)) {
-                std::this_thread::yield();
+                std::this_thread::sleep_for(std::chrono::microseconds(backoff_us));
+                backoff_us = std::min<uint32_t>(backoff_us << 1, config::MAX_BACKOFF_US);
             }
 
             if (config::DEBUG) {
@@ -162,7 +172,10 @@ namespace worker {
         // check response queues and send back responses if they exist
         // check last heartbeat time and send heartbeat if it has passed a certain duration
 
-        connect();
+        if (!connect()) {
+            running_.store(false, std::memory_order_release);
+            return;
+        }
 
         while (running_.load(std::memory_order_acquire)) {
             // Poll for Data
@@ -172,44 +185,74 @@ namespace worker {
 
             if (ret > 0) {
                 if (pfd.revents & (POLLHUP | POLLERR)) {
-                    connect();
+                    if (!connect()) {
+                        running_.store(false, std::memory_order_release);
+                        return;
+                    }
                     continue;
                 }
 
                 if (pfd.revents & POLLIN) {
                     message::Message msg;
-                    while (!connection_->receive(msg)) {
-                        connect(); // coordinator died
+                    int n = connection_->receive_with_retry(msg, config::CONNECTION_RETRY_COUNT);
+                    if (n == -3) continue;
+                    if (n <= 0) {
+                        running_.store(false, std::memory_order_release);
+                        return;
                     }
 
                     // Assign task
-                    size_t idx = next_worker_ % num_workers_;
-                    int retry = 0;
+                    size_t idx = next_worker_;
+                    uint32_t retry = 0;
                     if (msg.type_ != message::MessageType::ASSIGN) continue;
+                    uint32_t backoff_us = 1;
                     while (!task_queues_[idx]->try_push(msg.assign_)) {
-                        std::this_thread::yield();
-                        if (++retry > config::RETRY_COUNT) {
-                            next_worker_++;
-                            idx = next_worker_ % num_workers_;
+                        if (++retry > config::QUEUE_RETRY_COUNT) {
+                            next_worker_ = (next_worker_ + 1) % num_workers_;;
+                            idx = next_worker_;
                             retry = 0;
+                        } else {
+                            std::this_thread::sleep_for(std::chrono::microseconds(backoff_us));
+                            backoff_us = std::min<uint32_t>(backoff_us << 1, config::MAX_BACKOFF_US);
                         }
                     }
-                    next_worker_++;
+
+                    next_worker_ = (next_worker_ + 1) % num_workers_;
                 }
             }
 
             // Send responses
-            for (size_t i = 0; i < num_workers_; i++) {
+            size_t total_processed = 0;
+            const size_t TOTAL_BUDGET = 128;
+
+            size_t start = last_start_;  // rotating index
+
+            for (size_t k = 0; k < num_workers_ && total_processed < config::WORKER_OUT_BUDGET; k++) {
+                size_t i = (start + k) % num_workers_;
+
                 message::CompleteMsg response{};
+                size_t local_processed = 0;
+
                 while (response_queues_[i]->try_pop(response)) {
                     message::Message complete_msg{message::MessageType::COMPLETE};
                     complete_msg.complete_ = response;
 
-                    while (!connection_->send(complete_msg)) {
-                        connect();
+                    if (connection_->send_with_retry(complete_msg, config::CONNECTION_RETRY_COUNT) <= 0) {
+                        running_.store(false, std::memory_order_release);
+                        return;
                     }
+
+                    total_processed++;
+                    local_processed++;
+
+                    if (total_processed >= TOTAL_BUDGET) break;
+
+                    // 🔥 soft fairness cap (optional)
+                    if (local_processed >= 8) break;
                 }
             }
+
+            last_start_ = (start + 1) % num_workers_;
 
 
             // Send heartbeat
@@ -217,8 +260,9 @@ namespace worker {
             if (now - last_heartbeat_ns_ >= config::HEARTBEAT_INTERVAL_NS) {
                 message::Message heartbeat{message::MessageType::HEARTBEAT};
                 heartbeat.heartbeat_ = message::HeartBeatMsg{id_};
-                while (!connection_->send(heartbeat)) {
-                    connect();
+                if (connection_->send_with_retry(heartbeat, config::CONNECTION_RETRY_COUNT) <= 0) {
+                    running_.store(false, std::memory_order_release);
+                    return;
                 }
                 last_heartbeat_ns_ = utils::now_ns_u64();
             }
@@ -234,12 +278,12 @@ namespace worker {
             execution_threads_.emplace_back(&Worker::execution_worker, this, i);
         }
 
-
         for (auto &t: execution_threads_) {
             t.join();
         }
 
         network_thread_.join();
+        running_.store(false, std::memory_order_release);
     }
 
     void Worker::stop() {

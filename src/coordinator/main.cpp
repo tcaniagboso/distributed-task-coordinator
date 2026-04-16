@@ -1,6 +1,7 @@
-#include <iostream>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <stdexcept>
 
 #include "../../include/coordinator/coordinator.hpp"
@@ -18,6 +19,7 @@ void print_help() {
 }
 
 int main(int argc, char *argv[]) {
+    signal(SIGPIPE, SIG_IGN);
     uint16_t port{};
     std::vector<coordinator::PeerNode> peers{};
     bool port_set{false};

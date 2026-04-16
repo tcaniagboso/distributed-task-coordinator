@@ -24,6 +24,8 @@ namespace worker {
 
         size_t num_workers_;
 
+        size_t last_start_;
+
         uint32_t id_;
 
         uint16_t port_; // coordinator port
@@ -42,7 +44,7 @@ namespace worker {
 
         std::vector<std::unique_ptr<lock_free::SPSCQueue<message::CompleteMsg>>> response_queues_;
 
-        void connect();
+        bool connect();
 
         bool register_with_server();
 

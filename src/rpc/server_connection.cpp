@@ -19,19 +19,35 @@ namespace rpc {
         }
     }
 
-    bool ServerConnection::send(const message::Message &msg) const {
+    int ServerConnection::send(const message::Message &msg) const {
         if (fd_ < 0) {
-            return false;
+            return -1;
         }
 
-        return net::send_message(fd_, msg) > 0;
+        return net::send_message(fd_, msg);
     }
 
-    bool ServerConnection::receive(message::Message &msg) const {
+    int ServerConnection::receive(message::Message &msg) const {
         if (fd_ < 0) {
-            return false;
+            return -1;
         }
 
-        return net::receive_message(fd_, msg) > 0;
+        return net::receive_message(fd_, msg);
+    }
+
+    int ServerConnection::send_with_retry(const message::Message &msg, uint32_t retries) const {
+        if (fd_ < 0) {
+            return -1;
+        }
+
+        return net::send_message_with_retry(fd_, msg, retries);
+    }
+
+    int ServerConnection::receive_with_retry(message::Message &msg, uint32_t retries) const {
+        if (fd_ < 0) {
+            return -1;
+        }
+
+        return net::receive_message_with_retry(fd_, msg, retries);
     }
 } // namespace rpc

@@ -17,4 +17,6 @@ add_executable(worker
         src/client/main.cpp
         src/coordinator/main.cpp
         src/router/main.cpp
+        src/top/top.cpp
+        src/top/main.cpp
 )

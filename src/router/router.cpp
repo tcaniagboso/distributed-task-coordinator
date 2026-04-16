@@ -14,7 +14,9 @@ namespace router {
               port_{port},
               running_{false},
               shards_{std::move(shards)},
-              workers_{} {}
+              workers_{} {
+        workers_.reserve(config::MAX_CLIENTS * 2);
+    }
 
     Router::~Router() {
         stop();
@@ -34,8 +36,8 @@ namespace router {
 
     bool Router::try_connection(rpc::Client &connection, const Endpoint &endpoint, const message::Message &request,
                                 message::Message &response) {
-        if (!connection.send(request)) {
-            if (!connection.connect(endpoint.ip_, endpoint.port_) || !connection.send(request)) {
+        if (connection.send_with_retry(request, config::CONNECTION_RETRY_COUNT) <= 0) {
+            if (!connection.connect(endpoint.ip_, endpoint.port_) || connection.send_with_retry(request, config::CONNECTION_RETRY_COUNT) <= 0) {
                 return false;
             }
         }
@@ -44,10 +46,10 @@ namespace router {
             std::cout << "Routed task " << request.submit_.task_id_ << "\n";
         }
 
-        if (!connection.receive(response)) {
-            if (!connection.connect(endpoint.ip_, endpoint.port_)) {
-                return false;
-            }
+        if (connection.receive_with_retry(response, config::CONNECTION_RETRY_COUNT) <= 0) {
+//            if (!connection.connect(endpoint.ip_, endpoint.port_)) {
+//                return false;
+//            }
             return false;
         }
 
@@ -76,7 +78,7 @@ namespace router {
             message::Message client_msg;
             message::Message result_msg;
 
-            if (!server.receive(client_msg)) {
+            if (server.receive_with_retry(client_msg, config::CONNECTION_RETRY_COUNT) <= 0) {
                 break;
             }
 
@@ -119,7 +121,7 @@ namespace router {
 
             routing_index = (routing_index + 1) % num_shards;
 
-            if (!server.send(result_msg)) {
+            if (server.send_with_retry(result_msg, config::CONNECTION_RETRY_COUNT) <= 0) {
                 break;
             }
         }

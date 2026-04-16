@@ -5,6 +5,7 @@
 
 #include "../serialization/buffer.hpp"
 #include "../task/task.hpp"
+#include "../top/types.hpp"
 
 namespace message {
     enum class MessageType : uint8_t {
@@ -18,7 +19,9 @@ namespace message {
         REGISTER,
         ACKNOWLEDGE,
         SNAPSHOT,
-        PEER_RECONNECTED
+        PEER_RECONNECTED,
+        TOP_REQUEST,
+        TOP_RESPONSE
     };
 
     // Client -> Router -> Coordinator
@@ -331,6 +334,36 @@ namespace message {
 
     };
 
+    // For Top command
+    struct TopResponseMsg {
+        top::CoordinatorMetrics coordinator_metrics_;
+        std::vector<top::WorkerMetrics> workers_metrics_;
+
+        explicit TopResponseMsg() = default;
+
+        void serialize(serialization::BufferWriter &writer) const {
+            coordinator_metrics_.serialize(writer);
+
+            writer.write_u32(workers_metrics_.size());
+
+            for (const auto& metrics : workers_metrics_) {
+                metrics.serialize(writer);
+            }
+        }
+
+        void deserialize(serialization::BufferReader &reader) {
+            coordinator_metrics_.deserialize(reader);
+
+            size_t num_workers = reader.read_u32();
+
+            for (uint32_t w = 0; w < num_workers; w++) {
+                top::WorkerMetrics metrics;
+                metrics.deserialize(reader);
+                workers_metrics_.push_back(metrics);
+            }
+        }
+    };
+
     struct Message {
         uint64_t epoch_{};
         MessageType type_{};
@@ -343,6 +376,7 @@ namespace message {
         HeartBeatMsg heartbeat_{};
         AcknowledgeMsg acknowledge_{};
         SnapshotMsg snapshot_{};
+        TopResponseMsg top_response_{};
 
         explicit Message() = default;
 
@@ -380,6 +414,9 @@ namespace message {
                 case MessageType::SNAPSHOT:
                     snapshot_.serialize(writer);
                     break;
+                case MessageType::TOP_RESPONSE:
+                    top_response_.serialize(writer);
+                    break;
                 default:
                     break;
             }
@@ -416,6 +453,9 @@ namespace message {
                     break;
                 case MessageType::SNAPSHOT:
                     snapshot_.deserialize(reader);
+                    break;
+                case MessageType::TOP_RESPONSE:
+                    top_response_.deserialize(reader);
                     break;
                 default:
                     break;

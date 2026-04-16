@@ -1,6 +1,7 @@
-#include <iostream>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <stdexcept>
 
 #include "../../include/router/router.hpp"
@@ -41,6 +42,7 @@ router::RouterShardGroup parse_shard(const std::string &shard) {
 }
 
 int main(int argc, char *argv[]) {
+    signal(SIGPIPE, SIG_IGN);
     uint16_t port{};
     std::vector<router::RouterShardGroup> shards{};
     bool port_set{false};

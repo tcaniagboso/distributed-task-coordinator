@@ -16,12 +16,12 @@ namespace net {
         if (sock_fd < 0) return -1;
 
         // Timeout
-//        struct timeval tv{};
-//        tv.tv_sec = 0;
-//        tv.tv_usec = 500000; // 500 ms
-//
-//        setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-//        setsockopt(sock_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        struct timeval tv{};
+        tv.tv_sec = 0;
+        tv.tv_usec = 500000; // 500 ms
+
+        setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(sock_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -87,6 +87,10 @@ namespace net {
             if (n == 0) return -1;
             if (errno == EINTR) continue;
 
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return -2; // special code for timeout
+            }
+
             return -1;
         }
 
@@ -105,8 +109,12 @@ namespace net {
                 continue;
             }
 
-            if (n == 0) return 0;
+            if (n == 0) return -1;
             if (errno == EINTR) continue;
+
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return -2; // special code for timeout
+            }
 
             return -1;
         }
@@ -114,8 +122,7 @@ namespace net {
         return static_cast<int>(total);
     }
 
-    int send_message(int sock_fd, const message::Message &message) {
-        serialization::BufferWriter writer{};
+    void prepare_send_buffer(serialization::BufferWriter &writer, const message::Message &message) {
         writer.reserve_u32();
 
         message.serialize(writer);
@@ -124,35 +131,100 @@ namespace net {
 
         auto payload_size = static_cast<uint32_t>(buffer.size() - sizeof(uint32_t));
         writer.write_payload_size(payload_size);
-
-        return send_all(sock_fd, buffer.data(), buffer.size());
     }
 
-    int receive_message(int sock_fd, message::Message &message) {
+    int get_payload_size(int sock_fd, uint32_t &payload_size) {
         uint32_t encoded_size = 0;
 
         int n = receive_all(sock_fd, reinterpret_cast<char *>(&encoded_size), sizeof(encoded_size));
 
-        if (n <= 0) {
-            return n;
-        }
+        if (n == -2) return -2;   // timeout
+        if (n <= 0) return -1;    // closed / fatal
 
-        uint32_t payload_size = ntohl(encoded_size);
+        payload_size = ntohl(encoded_size);
 
-        const uint32_t MAX_MESSAGE_SIZE = 1 << 20;
-
+        const uint32_t MAX_MESSAGE_SIZE = 1 << 24;
         if (payload_size == 0 || payload_size > MAX_MESSAGE_SIZE) {
-            return -1;
+            return -3;            // invalid payload size
         }
+
+        return 1;                 // success
+    }
+
+    int send_message(int sock_fd, const message::Message &message) {
+        serialization::BufferWriter writer{};
+        prepare_send_buffer(writer, message);
+
+        auto &buffer = writer.get_buffer();
+        int n = send_all(sock_fd, buffer.data(), buffer.size());
+
+        if (n == -2) return -2;
+        else if (n <= 0) return -1;
+        else return n;
+    }
+
+    int receive_message(int sock_fd, message::Message &message) {
+        uint32_t payload_size = 0;
+
+        int header_status = get_payload_size(sock_fd, payload_size);
+        if (header_status < 0) return header_status;
 
         std::vector<char> buffer(payload_size);
 
-        if (receive_all(sock_fd, buffer.data(), buffer.size()) <= 0) {
-            return -1;
-        }
+        int n = receive_all(sock_fd, buffer.data(), buffer.size());
+        if (n == -2) return -2;   // timeout
+        if (n <= 0) return -1;    // closed / fatal
 
         serialization::BufferReader reader{buffer.data(), buffer.size()};
+        message.deserialize(reader);
 
+        return static_cast<int>(payload_size);
+    }
+
+    int send_message_with_retry(int sock_fd, const message::Message &message, uint32_t retries) {
+        serialization::BufferWriter writer{};
+        prepare_send_buffer(writer, message);
+
+        auto &buffer = writer.get_buffer();
+
+        for (uint32_t retry = 0; retry <= retries; retry++) {
+            int n = send_all(sock_fd, buffer.data(), buffer.size());
+
+            if (n == -2) continue; // timeout
+            if (n <= 0) return -1; // fatal
+            return n;
+        }
+
+        return -1;
+    }
+
+    int receive_message_with_retry(int sock_fd, message::Message &message, uint32_t retries) {
+        // Returns:
+        //  > 0 : bytes sent/received successfully
+        //  -2  : timeout
+        //  -1  : fatal error or closed connection
+        //  -3  : invalid framing/message size (receive only)
+
+        uint32_t payload_size = 0;
+        int header_status = -1;
+
+        for (uint32_t retry = 0; retry <= retries; retry++) {
+            header_status = get_payload_size(sock_fd, payload_size);
+
+            if (header_status == -2) continue; // timeout on header, safe to retry
+            if (header_status < 0) return header_status;
+            break;
+        }
+
+        if (header_status != 1) return -1;
+
+        std::vector<char> buffer(payload_size);
+
+        int n = receive_all(sock_fd, buffer.data(), buffer.size());
+        if (n == -2) return -1;   // timeout during payload read: treat as fatal
+        if (n <= 0) return -1;
+
+        serialization::BufferReader reader{buffer.data(), buffer.size()};
         message.deserialize(reader);
 
         return static_cast<int>(payload_size);

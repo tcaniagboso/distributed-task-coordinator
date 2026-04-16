@@ -1,6 +1,7 @@
-#include <iostream>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <stdexcept>
 
 #include "../../include/client/client.hpp"
@@ -34,6 +35,7 @@ client::RequestType get_request_type(const char *request_type) {
 }
 
 int main(int argc, char *argv[]) {
+    signal(SIGPIPE, SIG_IGN);
     std::string ip = "127.0.0.1";
     uint16_t port{};
     uint32_t clients{};
