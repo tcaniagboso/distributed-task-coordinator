@@ -11,7 +11,6 @@ namespace top {
 
     Top::Top(std::string ip, uint16_t port)
             : connection_{ip, port},
-              last_drawn_row_{0},
               port_{port},
               ip_{std::move(ip)} {}
 
@@ -22,7 +21,6 @@ namespace top {
     void Top::draw_worker_metrics(const top::WorkerMetrics &metrics, int& row) {
         if (row >= LINES - 1) return;
 
-        move(row, 0);
         clrtoeol(); // Clear the line BEFORE printing new data
 
         // Color: green if alive, red if dead
@@ -110,17 +108,14 @@ namespace top {
         return true;
     }
 
-    void Top::draw(message::TopResponseMsg &response) {
+    void Top::draw(message::TopResponseMsg &response) const {
         int row = 0;
+        move(0, 0);
         draw_coordinator_metrics(response.coordinator_metrics_, row);
         draw_all_worker_metrics(response.workers_metrics_, row);
 
-        for (int r = row; r < last_drawn_row_; ++r) {
-            move(r, 0);
-            clrtoeol();
-        }
-
-        last_drawn_row_ = row;
+        move(row, 0);
+        clrtobot();
     }
 
     void Top::close() {
@@ -147,7 +142,6 @@ namespace top {
 
         while (true) {
             erase();
-            move(0, 0);
 
             if (!fetch_metrics(response)) {
                 attron(COLOR_PAIR(3) | A_BOLD);
@@ -162,12 +156,6 @@ namespace top {
             }
 
             draw(response.top_response_);
-
-            // 4. Clear any remaining lines from previous runs that weren't overwritten
-            for (int r = last_drawn_row_; r < LINES; ++r) {
-                move(r, 0);
-                clrtoeol();
-            }
 
             mvprintw(LINES - 1, 0, "Press 'q' to quit");
             clrtoeol();

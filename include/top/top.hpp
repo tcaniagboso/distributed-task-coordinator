@@ -13,7 +13,6 @@ namespace top {
     class Top {
     private:
         rpc::Client connection_;
-        int last_drawn_row_;
         uint16_t port_;
         std::string ip_;
 
@@ -25,7 +24,7 @@ namespace top {
 
         bool fetch_metrics(message::Message& response) const ;
 
-        void draw(message::TopResponseMsg& response);
+        void draw(message::TopResponseMsg& response) const;
 
     public:
         explicit Top(std::string ip, uint16_t port);

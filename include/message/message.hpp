@@ -325,13 +325,15 @@ namespace message {
         void deserialize(serialization::BufferReader &reader) {
             uint32_t num_tasks = reader.read_u32();
 
+            tasks_.clear();
+            tasks_.reserve(num_tasks);
+
             for (uint32_t t = 0; t < num_tasks; t++) {
                 task::Task task;
                 task.deserialize(reader);
-                tasks_[task.id_] = task;
+                tasks_.emplace(task.id_, std::move(task));
             }
         }
-
     };
 
     // For Top command
@@ -356,10 +358,12 @@ namespace message {
 
             size_t num_workers = reader.read_u32();
 
+            workers_metrics_.clear();
+            workers_metrics_.reserve(num_workers);
+
             for (uint32_t w = 0; w < num_workers; w++) {
-                top::WorkerMetrics metrics;
-                metrics.deserialize(reader);
-                workers_metrics_.push_back(metrics);
+                workers_metrics_.emplace_back();
+                workers_metrics_.back().deserialize(reader);
             }
         }
     };
