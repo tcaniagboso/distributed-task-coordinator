@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "../../include/config/system_config.hpp"
 #include "../../include/net/net_utils.hpp"
 
 namespace net {
@@ -18,7 +19,7 @@ namespace net {
         // Timeout
         struct timeval tv{};
         tv.tv_sec = 0;
-        tv.tv_usec = 500000; // 500 ms
+        tv.tv_usec = config::SOCKET_TIMEOUT_MS;
 
         setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(sock_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));

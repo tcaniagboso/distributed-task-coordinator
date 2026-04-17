@@ -43,6 +43,14 @@ namespace utils {
         }
     }
 
+    inline void validate_clients(size_t clients) {
+        if (clients == 0 || clients > config::MAX_CLIENTS) {
+            throw std::invalid_argument(
+                    "Clients must be in range 1-" + std::to_string(config::MAX_CLIENTS)
+            );
+        }
+    }
+
     inline std::pair<std::string, uint16_t> parse_endpoint(const std::string& input) {
         auto pos = input.find(':');
         if (pos == std::string::npos) {

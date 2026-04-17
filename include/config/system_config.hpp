@@ -2,15 +2,23 @@
 #include <cstdint>
 
 namespace config {
+    // Networking
+    constexpr int SOCKET_TIMEOUT_MS = 500000; // 500ms
+
     // Worker config
     constexpr size_t MAX_WORKER_THREADS = 8;
     constexpr size_t WORKER_QUEUE_CAPACITY = 64;
     constexpr uint64_t HEARTBEAT_INTERVAL_NS = 200000000ULL;  // 200ms
     constexpr size_t WORKER_OUT_BUDGET = 128;
+    constexpr size_t WORKER_OUT_PER_THREAD_CAP = 8;
 
     // Retry Config
     constexpr uint32_t QUEUE_RETRY_COUNT = 10;
-    constexpr uint32_t CONNECTION_RETRY_COUNT = 5;
+    constexpr uint32_t WORKER_CONNECTION_RETRY_COUNT = 0;
+    constexpr uint32_t COORDINATOR_CONNECTION_RETRY_COUNT = 2;
+    constexpr uint32_t ROUTER_CONNECTION_RETRY_COUNT = 4;
+    constexpr uint32_t CLIENT_CONNECTION_RETRY_COUNT = 30;
+    constexpr uint32_t TOP_CONNECTION_RETRY_COUNT = 1;
     constexpr uint32_t REGISTER_RETRY_COUNT = 10;
 
     // Coordinator Config

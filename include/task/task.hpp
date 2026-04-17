@@ -72,28 +72,23 @@ namespace task {
             writer.write_u8(static_cast<uint8_t>(state_));
             writer.write_u32(client_id_);
             writer.write_u32(worker_id_);
+
             writer.write_u64(queued_at_);
+            writer.write_u64(started_at_);
+            writer.write_u64(completed_at_);
 
-            if (state_ == TaskState::RUNNING || state_ == TaskState::COMPLETED) {
-                writer.write_u64(started_at_);
-            }
-
-            if (state_ == TaskState::COMPLETED) {
-                writer.write_u64(completed_at_);
-                writer.write_u8(success_);
-
-                if (type_ == TaskType::WORD_COUNT) {
-                    writer.write_u32(result_);
-                }
-            }
+            writer.write_u8(success_);
+            writer.write_u32(result_);
 
             switch (type_) {
                 case TaskType::SYNTHETIC:
                     writer.write_u64(synthetic_task_.duration_us_);
                     break;
+
                 case TaskType::WORD_COUNT:
                     writer.write_string(word_count_task_.words_);
                     break;
+
                 default:
                     break;
             }
@@ -105,28 +100,24 @@ namespace task {
             state_ = static_cast<TaskState>(reader.read_u8());
             client_id_ = reader.read_u32();
             worker_id_ = reader.read_u32();
+
+            // Always read all timestamps
             queued_at_ = reader.read_u64();
+            started_at_ = reader.read_u64();
+            completed_at_ = reader.read_u64();
 
-            if (state_ == TaskState::RUNNING || state_ == TaskState::COMPLETED) {
-                started_at_ = reader.read_u64();
-            }
-
-            if (state_ == TaskState::COMPLETED) {
-                completed_at_ = reader.read_u64();
-                success_ = reader.read_u8();
-
-                if (type_ == TaskType::WORD_COUNT) {
-                    result_ = reader.read_u32();
-                }
-            }
+            success_ = reader.read_u8();
+            result_ = reader.read_u32();
 
             switch (type_) {
                 case TaskType::SYNTHETIC:
                     synthetic_task_.duration_us_ = reader.read_u64();
                     break;
+
                 case TaskType::WORD_COUNT:
                     word_count_task_.words_ = reader.read_string();
                     break;
+
                 default:
                     break;
             }

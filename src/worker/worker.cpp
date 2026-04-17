@@ -61,12 +61,12 @@ namespace worker {
     bool Worker::register_with_server() {
         message::Message register_msg{message::MessageType::REGISTER};
 
-        int result = connection_->send_with_retry(register_msg, config::CONNECTION_RETRY_COUNT);
+        int result = connection_->send_with_retry(register_msg, config::WORKER_CONNECTION_RETRY_COUNT);
 
         if (result <= 0) return false;
 
         message::Message ack_message;
-        result = connection_->receive_with_retry(ack_message, config::CONNECTION_RETRY_COUNT);
+        result = connection_->receive_with_retry(ack_message, config::WORKER_CONNECTION_RETRY_COUNT);
 
         if (result <= 0) return false;
 
@@ -194,7 +194,7 @@ namespace worker {
 
                 if (pfd.revents & POLLIN) {
                     message::Message msg;
-                    int n = connection_->receive_with_retry(msg, config::CONNECTION_RETRY_COUNT);
+                    int n = connection_->receive_with_retry(msg, config::WORKER_CONNECTION_RETRY_COUNT);
                     if (n == -3) continue;
                     if (n <= 0) {
                         running_.store(false, std::memory_order_release);
@@ -223,7 +223,6 @@ namespace worker {
 
             // Send responses
             size_t total_processed = 0;
-            const size_t TOTAL_BUDGET = 128;
 
             size_t start = last_start_;  // rotating index
 
@@ -237,7 +236,7 @@ namespace worker {
                     message::Message complete_msg{message::MessageType::COMPLETE};
                     complete_msg.complete_ = response;
 
-                    if (connection_->send_with_retry(complete_msg, config::CONNECTION_RETRY_COUNT) <= 0) {
+                    if (connection_->send_with_retry(complete_msg, config::WORKER_CONNECTION_RETRY_COUNT) <= 0) {
                         running_.store(false, std::memory_order_release);
                         return;
                     }
@@ -245,10 +244,9 @@ namespace worker {
                     total_processed++;
                     local_processed++;
 
-                    if (total_processed >= TOTAL_BUDGET) break;
+                    if (total_processed >= config::WORKER_OUT_BUDGET) break;
 
-                    // 🔥 soft fairness cap (optional)
-                    if (local_processed >= 8) break;
+                    if (local_processed >= config::WORKER_OUT_PER_THREAD_CAP) break;
                 }
             }
 
@@ -260,7 +258,7 @@ namespace worker {
             if (now - last_heartbeat_ns_ >= config::HEARTBEAT_INTERVAL_NS) {
                 message::Message heartbeat{message::MessageType::HEARTBEAT};
                 heartbeat.heartbeat_ = message::HeartBeatMsg{id_};
-                if (connection_->send_with_retry(heartbeat, config::CONNECTION_RETRY_COUNT) <= 0) {
+                if (connection_->send_with_retry(heartbeat, config::WORKER_CONNECTION_RETRY_COUNT) <= 0) {
                     running_.store(false, std::memory_order_release);
                     return;
                 }

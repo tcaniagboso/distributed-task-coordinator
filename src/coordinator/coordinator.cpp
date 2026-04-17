@@ -100,7 +100,7 @@ namespace coordinator {
         uint64_t latency = task.completed_at_ - task.queued_at_;
         metrics.latencies_.push_back(latency);
 
-        if (metrics.latencies_.size() > config::MAX_LATENCY_SAMPLES) {
+        while (metrics.latencies_.size() > config::MAX_LATENCY_SAMPLES) {
             metrics.latencies_.pop_front();
         }
 
@@ -125,6 +125,48 @@ namespace coordinator {
         }
 
         return metrics.completion_times_ns_.size();
+    }
+
+    void Coordinator::recompute_metrics(const std::unordered_map<uint64_t, task::Task> &tasks,
+                                        coordinator::Metrics &metrics) {
+        metrics.tasks_completed_ = 0;
+        metrics.tasks_running_ = 0;
+        metrics.tasks_queued_ = 0;
+        metrics.total_latency_ns = 0;
+        metrics.min_latency_ns = 0;
+        metrics.max_latency_ns = 0;
+        metrics.latencies_.clear();
+
+        for (const auto& taskPair : tasks) {
+            const auto& task = taskPair.second;
+
+            switch (task.state_) {
+                case task::TaskState::COMPLETED: {
+                    metrics.tasks_completed_++;
+
+                    uint64_t latency = task.completed_at_ - task.queued_at_;
+                    metrics.total_latency_ns += latency;
+
+                    if (metrics.tasks_completed_ == 1) {
+                        metrics.min_latency_ns = latency;
+                    } else {
+                        metrics.min_latency_ns = std::min(metrics.min_latency_ns, latency);
+                    }
+                    metrics.max_latency_ns = std::max(metrics.max_latency_ns, latency);
+
+                    metrics.latencies_.push_back(latency);
+                    break;
+                }
+
+                case task::TaskState::RUNNING:
+                    metrics.tasks_running_++;
+                    break;
+
+                case task::TaskState::QUEUED:
+                    metrics.tasks_queued_++;
+                    break;
+            }
+        }
     }
 
     void Coordinator::add_to_log(const message::Message &msg) {
@@ -491,6 +533,8 @@ namespace coordinator {
         available_ids_.clear();
         replication_log_.clear();
         client_fds_.clear();
+
+        recompute_metrics(tasks_, metrics_);
     }
 
     void Coordinator::process_peer_reconnected() {
@@ -696,7 +740,7 @@ namespace coordinator {
             return;
         }
 
-        if (net::send_message_with_retry(peer.connection_->fd(), event.msg_, config::CONNECTION_RETRY_COUNT) <= 0) {
+        if (net::send_message_with_retry(peer.connection_->fd(), event.msg_, config::COORDINATOR_CONNECTION_RETRY_COUNT) <= 0) {
             peer.alive_ = false;
             peer.connection_ = nullptr;
             reconnect_to_peer(peer);
@@ -788,7 +832,7 @@ namespace coordinator {
 
                     // Existing connection
                     message::Message msg{};
-                    int n = net::receive_message_with_retry(pfd.fd, msg, config::CONNECTION_RETRY_COUNT);
+                    int n = net::receive_message_with_retry(pfd.fd, msg, config::COORDINATOR_CONNECTION_RETRY_COUNT);
 
                     if (n == -1) {
                         close(pfd.fd);
@@ -828,7 +872,7 @@ namespace coordinator {
                 } else {
                     if (out.fd_ >= 0) {
                         // If we can't send then worker or router is dead
-                        net::send_message_with_retry(out.fd_, out.msg_, config::CONNECTION_RETRY_COUNT);
+                        net::send_message_with_retry(out.fd_, out.msg_, config::COORDINATOR_CONNECTION_RETRY_COUNT);
                     }
                 }
                 processed++;

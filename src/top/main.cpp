@@ -10,8 +10,8 @@ void print_help() {
     std::cout << "Usage: ./top [OPTIONS]\n\n";
 
     std::cout << "Options:\n";
-    std::cout << "  -p, --port <port>           Router port (required)\n";
-    std::cout << "      --ip <address>          Router IP (default: 127.0.0.1) (optional)\n";
+    std::cout << "  -p, --port <port>           Coordinator port (required)\n";
+    std::cout << "      --ip <address>          Coordinator IP (default: 127.0.0.1) (optional)\n";
     std::cout << "  -h, --help                  Show this help message\n\n";
 
     std::cout << "Example:\n";

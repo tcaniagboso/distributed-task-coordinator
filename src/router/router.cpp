@@ -36,8 +36,8 @@ namespace router {
 
     bool Router::try_connection(rpc::Client &connection, const Endpoint &endpoint, const message::Message &request,
                                 message::Message &response) {
-        if (connection.send_with_retry(request, config::CONNECTION_RETRY_COUNT) <= 0) {
-            if (!connection.connect(endpoint.ip_, endpoint.port_) || connection.send_with_retry(request, config::CONNECTION_RETRY_COUNT) <= 0) {
+        if (connection.send_with_retry(request, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
+            if (!connection.connect(endpoint.ip_, endpoint.port_) || connection.send_with_retry(request, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
                 return false;
             }
         }
@@ -46,10 +46,11 @@ namespace router {
             std::cout << "Routed task " << request.submit_.task_id_ << "\n";
         }
 
-        if (connection.receive_with_retry(response, config::CONNECTION_RETRY_COUNT) <= 0) {
+        if (connection.receive_with_retry(response, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
 //            if (!connection.connect(endpoint.ip_, endpoint.port_)) {
 //                return false;
 //            }
+            connection.close_connection();
             return false;
         }
 
@@ -78,7 +79,7 @@ namespace router {
             message::Message client_msg;
             message::Message result_msg;
 
-            if (server.receive_with_retry(client_msg, config::CONNECTION_RETRY_COUNT) <= 0) {
+            if (server.receive_with_retry(client_msg, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
                 break;
             }
 
@@ -121,7 +122,7 @@ namespace router {
 
             routing_index = (routing_index + 1) % num_shards;
 
-            if (server.send_with_retry(result_msg, config::CONNECTION_RETRY_COUNT) <= 0) {
+            if (server.send_with_retry(result_msg, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
                 break;
             }
         }

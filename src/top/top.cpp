@@ -70,7 +70,7 @@ namespace top {
         clrtoeol();
         mvprintw(row++, 2, "Port: %d", port_);
         clrtoeol();
-        mvprintw(row++, 2, "Primary: %d", metrics.is_primary_);
+        mvprintw(row++, 2, "Primary: %s", metrics.is_primary_ == 1? "YES" : "NO");
         clrtoeol();
         mvprintw(row++, 2, "Throughput: %lu tasks/sec", metrics.throughput_);
         clrtoeol();
@@ -99,10 +99,10 @@ namespace top {
     bool Top::fetch_metrics(message::Message &response) const {
         message::Message top_request{message::MessageType::TOP_REQUEST};
 
-        if (connection_.send_with_retry(top_request, config::CONNECTION_RETRY_COUNT) <= 0)
+        if (connection_.send_with_retry(top_request, config::TOP_CONNECTION_RETRY_COUNT) <= 0)
             return false;
 
-        if (connection_.receive_with_retry(response, config::CONNECTION_RETRY_COUNT) <= 0)
+        if (connection_.receive_with_retry(response, config::TOP_CONNECTION_RETRY_COUNT) <= 0)
             return false;
 
         return true;

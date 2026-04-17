@@ -242,7 +242,7 @@ echo "Throughput (tasks/sec): $THROUGHPUT"
 # Save CSV
 # =========================
 if [ ! -f "$RESULT_FILE" ]; then
-  echo "shards,workers_per_shard,clients,total_tasks,type,duration_ms,throughput" > $RESULT_FILE
+  echo "shards,workers_per_shard,clients,total_tasks,type,throughput,avg_latency,p95_latency,duration_ms" > $RESULT_FILE
 fi
 
 echo "$SHARDS,$WORKERS,$CLIENTS,$TOTAL_TASKS,$TASK_TYPE,$THROUGHPUT,$AVG_LAT,$P95,$DURATION_MS" >> $RESULT_FILE

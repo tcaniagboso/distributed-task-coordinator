@@ -124,6 +124,7 @@ namespace serialization {
 
         std::string read_string() {
             uint32_t size = read_u32();
+            assert(buffer_ + offset_ + size <= end_);
             std::string s(buffer_ + offset_, size);
             offset_ += size;
             return s;

@@ -137,9 +137,9 @@ namespace client {
             }
 
             auto start = std::chrono::steady_clock::now();
-            if (client.send_with_retry(request, config::CONNECTION_RETRY_COUNT) <= 0) {
+            if (client.send_with_retry(request, config::CLIENT_CONNECTION_RETRY_COUNT) <= 0) {
                 if (!client.connect(ip, port)
-                || client.send_with_retry(request, config::CONNECTION_RETRY_COUNT) <= 0) {
+                || client.send_with_retry(request, config::CLIENT_CONNECTION_RETRY_COUNT) <= 0) {
                     break;
                 }
             }
@@ -149,7 +149,7 @@ namespace client {
                 std::cout << "Waiting for response " << task_id << "\n";
             }
 
-            if (client.receive_with_retry(response, config::CONNECTION_RETRY_COUNT) <= 0) {
+            if (client.receive_with_retry(response, config::CLIENT_CONNECTION_RETRY_COUNT) <= 0) {
                 break;
             }
 

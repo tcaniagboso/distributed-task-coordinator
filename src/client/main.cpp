@@ -11,7 +11,8 @@ void print_help() {
 
     std::cout << "Options:\n";
     std::cout << "  -p, --port <port>           Router port (required)\n";
-    std::cout << "  -c, --clients <clients>     Number of client threads (required)\n";
+    std::cout << "  -c, --clients <clients>     Number of client threads (1-"
+              << config::MAX_CLIENTS << ") (required)\n";
     std::cout << "  -n, --num_tasks <tasks>     Tasks per client (required)\n";
     std::cout << "  -t, --task_type <type>      synthetic | word | mixed (required)\n";
     std::cout << "      --ip <address>          Router IP (default: 127.0.0.1) (optional)\n";
@@ -71,7 +72,7 @@ int main(int argc, char *argv[]) {
                 } catch (...) {
                     throw std::invalid_argument("Invalid value for " + std::string(argv[i - 1]) + " (must be numeric)");
                 }
-                utils::validate_numeric(clients, "Clients");
+                utils::validate_clients(clients);
                 clients_set = true;
             } else if (std::strcmp(cur, "-n") == 0 || std::strcmp(cur, "--num_tasks") == 0) {
                 utils::validate_index(i + 1, argc, argv[i]);

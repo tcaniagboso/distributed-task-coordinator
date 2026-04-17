@@ -61,6 +61,7 @@ namespace coordinator {
         static void record_completion_system(Metrics& metrics, const task::Task& task);
 
         static uint64_t get_rolling_throughput(Metrics& metrics);
+        static void recompute_metrics(const std::unordered_map<uint64_t, task::Task>& tasks, Metrics& metrics);
 
         void mark_inactive(uint32_t worker_id);
 
