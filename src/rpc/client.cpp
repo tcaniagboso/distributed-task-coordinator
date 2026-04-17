@@ -21,6 +21,7 @@ namespace rpc {
     }
 
     bool Client::connect(const std::string& ip, uint16_t port) {
+        close_connection();
         sock_fd_ = net::connect_to_server(ip, port);
         return sock_fd_ >= 0;
     }
