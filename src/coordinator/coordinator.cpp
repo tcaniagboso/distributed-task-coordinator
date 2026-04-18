@@ -543,7 +543,6 @@ namespace coordinator {
 
         replication_write_ptr_ = 0;
         replication_read_ptr_ = 0;
-        replication_log_.clear();
         queued_backlog_.clear();
         early_complete_reps_.clear();
         completed_backlog_.clear();
