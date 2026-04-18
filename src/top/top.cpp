@@ -10,7 +10,7 @@
 namespace top {
 
     Top::Top(std::string ip, uint16_t port)
-            : connection_{ip, port},
+            : connection_{},
               port_{port},
               ip_{std::move(ip)} {}
 
@@ -138,6 +138,7 @@ namespace top {
             init_pair(4, COLOR_CYAN, COLOR_BLACK);   // headers
         }
 
+        connection_.connect(ip_, port_);
         message::Message response{};
 
         while (true) {

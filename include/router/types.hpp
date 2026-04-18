@@ -50,12 +50,8 @@ namespace router {
     };
 
     struct ThreadShard {
-        rpc::Client primary_;
-        rpc::Client backup_;
-
-        explicit ThreadShard(const Endpoint& p, const Endpoint& b)
-                : primary_{p.ip_, p.port_},
-                  backup_{b.ip_, b.port_} {}
+        rpc::Client primary_{};
+        rpc::Client backup_{};
 
         void close_connections() {
             primary_.close_connection();

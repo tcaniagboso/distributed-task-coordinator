@@ -11,7 +11,7 @@ namespace rpc {
         int sock_fd_;
 
     public:
-        explicit Client(const std::string &ip, uint16_t port);
+        explicit Client();
 
         ~Client();
 

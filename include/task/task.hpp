@@ -85,9 +85,9 @@ namespace task {
                     writer.write_u64(synthetic_task_.duration_us_);
                     break;
 
-                case TaskType::WORD_COUNT:
-                    writer.write_string(word_count_task_.words_);
-                    break;
+//                case TaskType::WORD_COUNT:
+//                    writer.write_string(word_count_task_.words_);
+//                    break;
 
                 default:
                     break;
@@ -114,9 +114,9 @@ namespace task {
                     synthetic_task_.duration_us_ = reader.read_u64();
                     break;
 
-                case TaskType::WORD_COUNT:
-                    word_count_task_.words_ = reader.read_string();
-                    break;
+//                case TaskType::WORD_COUNT:
+//                    word_count_task_.words_ = reader.read_string();
+//                    break;
 
                 default:
                     break;

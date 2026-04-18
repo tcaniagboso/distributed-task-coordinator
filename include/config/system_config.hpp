@@ -2,9 +2,6 @@
 #include <cstdint>
 
 namespace config {
-    // Networking
-    constexpr int SOCKET_TIMEOUT_MS = 500000; // 500ms
-
     // Worker config
     constexpr size_t MAX_WORKER_THREADS = 8;
     constexpr size_t WORKER_QUEUE_CAPACITY = 64;
@@ -35,8 +32,15 @@ namespace config {
     constexpr uint64_t THROUGHPUT_WINDOW_NS = 1000000000ULL;
     constexpr size_t MAX_LATENCY_SAMPLES = 10000;
 
+    // Router Config
+    constexpr int RETRY_SHARDS = 2;
+
+    // Client config
+    constexpr int RETRY_TASK = 2;
+
     // Sockets config
     constexpr size_t BACKLOG = 256;
+    constexpr int SOCKET_TIMEOUT_US = 500000; // 500ms
 
     // Word count sizes (number of words)
     constexpr size_t SHORT_TEXT_WORDS  = 10;

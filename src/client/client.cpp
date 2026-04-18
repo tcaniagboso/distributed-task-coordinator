@@ -108,63 +108,79 @@ namespace client {
     void ClientRunner::worker(uint32_t id) {
         const auto &ip = ip_;
         const auto &port = port_;
-        rpc::Client client{ip, port};
+        rpc::Client client{};
+        client.connect(ip_, port_);
 
         uint64_t task_id_base = num_tasks_ * id;
 
         auto &latencies = latencies_[id];
         latencies.reserve(num_tasks_);
+
         for (uint64_t task = 0; task < num_tasks_; task++) {
-            uint64_t task_id = task_id_base + task;
+            bool completed = false;
+            for (int retry = 0; retry <= config::RETRY_TASK && !completed; retry++) {
+                uint64_t task_id = task_id_base + task;
 
-            message::Message request{message::MessageType::SUBMIT};
-            message::Message response;
+                message::Message request{message::MessageType::SUBMIT};
+                message::Message response;
 
-            request.submit_.client_id_ = id;
-            request.submit_.task_id_ = task_id;
+                request.submit_.client_id_ = id;
+                request.submit_.task_id_ = task_id;
 
-            WorkloadSize size;
-            switch (req_type_) {
-                case RequestType::MIXED:
-                    size = create_mixed_task(request);
-                    break;
-                case RequestType::SYNTHETIC:
-                    size = create_synthetic_task(request);
-                    break;
-                case RequestType::WORD_COUNT:
-                    size = create_word_count_task(request);
-                    break;
-            }
-
-            auto start = std::chrono::steady_clock::now();
-            if (client.send_with_retry(request, config::CLIENT_CONNECTION_RETRY_COUNT) <= 0) {
-                if (!client.connect(ip, port)
-                || client.send_with_retry(request, config::CLIENT_CONNECTION_RETRY_COUNT) <= 0) {
-                    break;
+                WorkloadSize size;
+                switch (req_type_) {
+                    case RequestType::MIXED:
+                        size = create_mixed_task(request);
+                        break;
+                    case RequestType::SYNTHETIC:
+                        size = create_synthetic_task(request);
+                        break;
+                    case RequestType::WORD_COUNT:
+                        size = create_word_count_task(request);
+                        break;
                 }
+
+                auto start = std::chrono::steady_clock::now();
+                if (client.send_with_retry(request, config::CLIENT_CONNECTION_RETRY_COUNT) <= 0) {
+                    if (!client.connect(ip, port)
+                        || client.send_with_retry(request, config::CLIENT_CONNECTION_RETRY_COUNT) <= 0) {
+                        continue;
+                    }
+                }
+
+                if (config::DEBUG) {
+                    std::cout << "Sent task " << task_id << "\n";
+                    std::cout << "Waiting for response " << task_id << "\n";
+                }
+
+
+                if (client.receive_with_retry(response, config::CLIENT_CONNECTION_RETRY_COUNT) <= 0) {
+                    continue;
+                }
+
+                if (config::DEBUG) {
+                    std::cout << "Received result for task" << task_id << "\n";
+                }
+
+                auto end = std::chrono::steady_clock::now();
+
+                if (response.result_.success_ == 0) {
+                    continue;
+
+                }
+
+                auto duration = end - start;
+                uint64_t latency = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+                latencies.push_back(latency);
+
+                if (request.submit_.type_ == task::TaskType::WORD_COUNT) {
+                    assert(response.result_.result_ == static_cast<uint32_t>(get_text_size(size)));
+                }
+
+                completed = true;
             }
 
-            if (config::DEBUG) {
-                std::cout << "Sent task " << task_id << "\n";
-                std::cout << "Waiting for response " << task_id << "\n";
-            }
-
-            if (client.receive_with_retry(response, config::CLIENT_CONNECTION_RETRY_COUNT) <= 0) {
-                break;
-            }
-
-            if (config::DEBUG) {
-                std::cout << "Received result for task" << task_id << "\n";
-            }
-            auto end = std::chrono::steady_clock::now();
-
-            auto duration = end - start;
-            uint64_t latency = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
-            latencies.push_back(latency);
-
-            if (request.submit_.type_ == task::TaskType::WORD_COUNT) {
-                assert(response.result_.result_ == static_cast<uint32_t>(get_text_size(size)));
-            }
+            if (!completed) break;
         }
 
         client.close_connection();

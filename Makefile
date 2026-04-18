@@ -30,7 +30,6 @@ router: src/router/main.cpp $(COMMON_SRCS)
 client: src/client/main.cpp $(COMMON_SRCS)
 	$(CXX) $(CXXFLAGS) $^ -o client
 
-# 🔥 TOP TARGET
 top: src/top/main.cpp $(COMMON_SRCS) $(TOP_SRCS)
 	$(CXX) $(CXXFLAGS) $^ -o top -lncurses
 

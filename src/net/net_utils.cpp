@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
+#include <iostream>
 #include <netinet/tcp.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -19,7 +20,7 @@ namespace net {
         // Timeout
         struct timeval tv{};
         tv.tv_sec = 0;
-        tv.tv_usec = config::SOCKET_TIMEOUT_MS;
+        tv.tv_usec = config::SOCKET_TIMEOUT_US;
 
         setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(sock_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -144,8 +145,9 @@ namespace net {
 
         payload_size = ntohl(encoded_size);
 
-        const uint32_t MAX_MESSAGE_SIZE = 1 << 24;
+        const uint32_t MAX_MESSAGE_SIZE = 1 << 27;
         if (payload_size == 0 || payload_size > MAX_MESSAGE_SIZE) {
+            if (payload_size > MAX_MESSAGE_SIZE) std::cerr << "Message is too big to receive\n";
             return -3;            // invalid payload size
         }
 

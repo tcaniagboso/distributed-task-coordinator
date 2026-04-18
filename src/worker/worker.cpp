@@ -43,7 +43,8 @@ namespace worker {
         int backoff_ms = 10;
 
         for (uint32_t retry = 0; retry < config::REGISTER_RETRY_COUNT; retry++){
-            connection_.reset(new rpc::Client{ip_, port_});
+            connection_.reset(new rpc::Client{});
+            connection_->connect(ip_, port_);
 
             if (connection_->fd() >= 0) {
                 if (register_with_server()) {
@@ -55,6 +56,11 @@ namespace worker {
             backoff_ms = std::min(backoff_ms * 2, 1000);
         }
 
+        if (connection_) {
+            connection_->close_connection();
+        }
+
+        connection_.reset();
         return false;
     }
 

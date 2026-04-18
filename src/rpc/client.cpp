@@ -5,8 +5,8 @@
 #include "../../include/net/net_utils.hpp"
 
 namespace rpc {
-    Client::Client(const std::string &ip, uint16_t port)
-            : sock_fd_{net::connect_to_server(ip, port)} {}
+    Client::Client()
+            : sock_fd_{-1} {}
 
     Client::~Client() {
         close_connection();

@@ -36,8 +36,13 @@ namespace router {
 
     bool Router::try_connection(rpc::Client &connection, const Endpoint &endpoint, const message::Message &request,
                                 message::Message &response) {
+        if (connection.fd() < 0 && !connection.connect(endpoint.ip_, endpoint.port_)) {
+            return false;
+        }
         if (connection.send_with_retry(request, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
-            if (!connection.connect(endpoint.ip_, endpoint.port_) || connection.send_with_retry(request, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
+            if (!connection.connect(endpoint.ip_, endpoint.port_) ||
+                connection.send_with_retry(request, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
+                connection.close_connection();
                 return false;
             }
         }
@@ -66,63 +71,105 @@ namespace router {
         auto &shards = shards_;
         auto num_shards = shards.size();
         std::vector<ThreadShard> shard_connections;
-        shard_connections.reserve(shards.size());
+        shard_connections.reserve(num_shards);
 
-        // use id here?
         size_t routing_index = std::hash<std::thread::id>{}(std::this_thread::get_id()) % num_shards;
 
-        for (const auto &shard: shards) {
-            shard_connections.emplace_back(shard.primary_, shard.backup_);
+        for (size_t i = 0; i < num_shards; i++) {
+            shard_connections.emplace_back();
         }
 
         while (running_.load(std::memory_order_acquire)) {
-            message::Message client_msg;
-            message::Message result_msg;
+            message::Message request;
+            message::Message response;
 
-            if (server.receive_with_retry(client_msg, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
+            if (server.receive_with_retry(request, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
                 break;
             }
 
             bool sent = false;
 
-            for (size_t attempt = 0; attempt < num_shards && !sent; attempt++) {
-                auto idx = (routing_index + attempt) % num_shards;
-                auto &shard = shards[idx];
-                auto &primary_endpoint = shard.primary_;
-                auto &backup_endpoint = shard.backup_;
-                auto &primary = shard_connections[idx].primary_;
-                auto &backup = shard_connections[idx].backup_;
-                auto current = shard.active_target_.load(std::memory_order_acquire);
-                if (current == ActiveTarget::PRIMARY) {
-                    if (!try_connection(primary, primary_endpoint, client_msg, result_msg)) {
-                        if (try_connection(backup, backup_endpoint, client_msg, result_msg)) {
-                            ActiveTarget expected = ActiveTarget::PRIMARY;
-                            shard.active_target_.compare_exchange_strong(expected, ActiveTarget::BACKUP);
+            for (int retry = 0; retry <= config::RETRY_SHARDS && !sent; retry++) {
+                for (size_t attempt = 0; attempt < num_shards && !sent; attempt++) {
+                    auto idx = (routing_index + attempt) % num_shards;
+                    auto &shard = shards[idx];
+                    auto &primary_endpoint = shard.primary_;
+                    auto &backup_endpoint = shard.backup_;
+                    auto &primary = shard_connections[idx].primary_;
+                    auto &backup = shard_connections[idx].backup_;
+                    auto current = shard.active_target_.load(std::memory_order_acquire);
+                    if (current == ActiveTarget::PRIMARY) {
+                        if (config::DEBUG) {
+                            std::cout << "[ROUTER] Sending task " << request.submit_.task_id_
+                                      << " to PRIMARY\n";
+                        }
+                        if (!try_connection(primary, primary_endpoint, request, response)) {
+                            if (config::DEBUG) {
+                                std::cout << "[ROUTER] PRIMARY failed for task "
+                                          << request.submit_.task_id_ << "\n";
+                                std::cout << "[ROUTER] Trying BACKUP for task "
+                                          << request.submit_.task_id_ << "\n";
+                            }
+                            if (try_connection(backup, backup_endpoint, request, response)) {
+                                if (config::DEBUG) {
+                                    std::cout << "[ROUTER] BACKUP succeeded for task "
+                                              << request.submit_.task_id_ << "\n";
+                                }
+                                ActiveTarget expected = ActiveTarget::PRIMARY;
+                                shard.active_target_.compare_exchange_strong(expected, ActiveTarget::BACKUP);
+                                sent = true;
+                            }
+                        } else {
                             sent = true;
                         }
                     } else {
-                        sent = true;
+                        if (config::DEBUG) {
+                            std::cout << "[ROUTER] Sending task " << request.submit_.task_id_
+                                      << " to BACKUP\n";
+                        }
+                        if (!try_connection(backup, backup_endpoint, request, response)) {
+                            if (config::DEBUG) {
+                                std::cout << "[ROUTER] BACKUP failed for task "
+                                          << request.submit_.task_id_ << "\n";
+                                std::cout << "[ROUTER] Trying PRIMARY for task "
+                                          << request.submit_.task_id_ << "\n";
+                            }
+                            if (try_connection(primary, primary_endpoint, request, response)) {
+                                if (config::DEBUG) {
+                                    std::cout << "[ROUTER] PRIMARY succeeded for task "
+                                              << request.submit_.task_id_ << "\n";
+                                }
+                                ActiveTarget expected = ActiveTarget::BACKUP;
+                                shard.active_target_.compare_exchange_strong(expected, ActiveTarget::PRIMARY);
+                                sent = true;
+                            }
+                        } else {
+                            sent = true;
+                        }
                     }
-                } else {
-                    if (!try_connection(backup, backup_endpoint, client_msg, result_msg)) {
-                        if (try_connection(primary, primary_endpoint, client_msg, result_msg)) {
-                            ActiveTarget expected = ActiveTarget::BACKUP;
-                            shard.active_target_.compare_exchange_strong(expected, ActiveTarget::PRIMARY);
-                            sent = true;
-                        }
-                    } else {
-                        sent = true;
+
+                    if (!sent && retry < config::RETRY_SHARDS) {
+                        // Give the Backup Coordinator a moment to promote itself
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
                     }
                 }
             }
 
             if (!sent) {
-                break;
+                message::Message fail_msg{message::MessageType::RESULT};
+                fail_msg.result_.task_id_ = request.submit_.task_id_;
+                fail_msg.result_.success_ = 0;
+                fail_msg.result_.result_ = 0;
+
+                if (server.send_with_retry(fail_msg, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
+                    break;
+                }
+                continue;
             }
 
             routing_index = (routing_index + 1) % num_shards;
 
-            if (server.send_with_retry(result_msg, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
+            if (server.send_with_retry(response, config::ROUTER_CONNECTION_RETRY_COUNT) <= 0) {
                 break;
             }
         }

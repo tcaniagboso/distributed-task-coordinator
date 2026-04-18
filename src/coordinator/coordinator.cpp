@@ -241,6 +241,13 @@ namespace coordinator {
     }
 
     bool Coordinator::assign(task::Task &task) {
+        if (config::DEBUG) {
+            std::cout << "[ASSIGN] trying task " << task.id_
+                      << " active_workers=" << active_workers_.size() << "\n";
+            std::cout << "[WORKERS] total=" << workers_states_.size()
+                      << " active=" << active_workers_.size() << "\n";
+        }
+
         bool assigned = false;
 
         uint32_t num_active = active_workers_.size();
@@ -367,6 +374,9 @@ namespace coordinator {
     }
 
     void Coordinator::process_submit_event(const IncomingEvent &event) {
+        if (config::DEBUG) {
+            std::cout << "[SUBMIT] event\n";
+        }
         is_primary_ = true;
         auto &submit_msg = event.msg_.submit_;
         client_fds_[submit_msg.client_id_] = event.fd_;
@@ -426,6 +436,9 @@ namespace coordinator {
     }
 
     void Coordinator::process_assign_replicate_event(const IncomingEvent &event) {
+        if (config::DEBUG) {
+            std::cout << "[ASSIGN REPLICATE]\n";
+        }
         is_primary_ = false;
         if (event.msg_.epoch_ < current_epoch_) return;
         current_epoch_ = event.msg_.epoch_;
@@ -459,6 +472,9 @@ namespace coordinator {
     }
 
     void Coordinator::process_complete_replicate_event(const IncomingEvent &event) {
+        if (config::DEBUG) {
+            std::cout << "[COMPLETE REPLICATE]\n";
+        }
         is_primary_ = false;
         if (event.msg_.epoch_ < current_epoch_) return;
         const auto &completed_rep_msg = event.msg_.completed_rep_;
@@ -523,16 +539,14 @@ namespace coordinator {
     void Coordinator::process_snapshot_event(const IncomingEvent &event) {
         is_primary_ = false;
         current_epoch_ = event.msg_.epoch_;
-        replication_read_ptr_ = 0;
         tasks_ = event.msg_.snapshot_.tasks_;
 
-        queued_backlog_.clear();
-        completed_backlog_.clear();
-        active_workers_.clear();
-        early_complete_reps_.clear();
-        available_ids_.clear();
+        replication_write_ptr_ = 0;
+        replication_read_ptr_ = 0;
         replication_log_.clear();
-        client_fds_.clear();
+        queued_backlog_.clear();
+        early_complete_reps_.clear();
+        completed_backlog_.clear();
 
         recompute_metrics(tasks_, metrics_);
     }
@@ -712,10 +726,11 @@ namespace coordinator {
     }
 
     bool Coordinator::connect_to_peer(PeerNode &peer) {
-        peer.connection_.reset(new rpc::Client{peer.ip_, peer.port_});
+        peer.connection_.reset(new rpc::Client{});
+        peer.connection_->connect(peer.ip_, peer.port_);
         if (peer.connection_->fd() < 0) {
             peer.alive_ = false;
-            peer.connection_ = nullptr;
+            peer.connection_.reset();
             return false;
         }
 
@@ -742,7 +757,7 @@ namespace coordinator {
 
         if (net::send_message_with_retry(peer.connection_->fd(), event.msg_, config::COORDINATOR_CONNECTION_RETRY_COUNT) <= 0) {
             peer.alive_ = false;
-            peer.connection_ = nullptr;
+            peer.connection_.reset();
             reconnect_to_peer(peer);
         }
     }
@@ -809,7 +824,7 @@ namespace coordinator {
 
                         if (peer_.connection_ && pfd.fd == peer_.connection_->fd()) {
                             peer_.alive_ = false;
-                            peer_.connection_ = nullptr;
+                            peer_.connection_.reset();
                         } else {
                             close(pfd.fd);
                             conns.erase(std::remove(conns.begin(), conns.end(), pfd.fd), conns.end());
