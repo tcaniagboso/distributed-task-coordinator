@@ -2,7 +2,7 @@
 
 # =========================
 # Usage:
-# ./run_benchmark.sh <shards> <workers_per_shard> <clients> <total_tasks> <task_type>
+# ./run_benchmark.sh <shards> <workers_per_shard> <execution_threads_per_worker> <clients> <total_tasks> <task_type>
 # Example:
 # ./run_benchmark.sh 2 4 64 100000 mixed
 # =========================
@@ -14,7 +14,7 @@ set -e
 # =========================
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
   echo "Usage:"
-  echo "  ./run_benchmark.sh <shards> <workers_per_shard> <clients> <tasks_per_client> <task_type>"
+  echo "  ./run_benchmark.sh <shards> <workers_per_shard> <execution_threads_per_worker> <clients> <tasks_per_client> <task_type>"
   echo ""
   echo "Arguments:"
   echo "  shards                               Number of shards (each has primary + backup)"
@@ -62,7 +62,11 @@ fi
 
 BASE_COORD_PORT=7000
 ROUTER_PORT=9000
-RESULT_FILE="results.csv"
+
+# Results file
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+mkdir -p "$SCRIPT_DIR/results"
+RESULT_FILE="$SCRIPT_DIR/results/results.csv"
 
 # =========================
 # Cleanup

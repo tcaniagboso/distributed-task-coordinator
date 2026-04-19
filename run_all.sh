@@ -18,7 +18,9 @@ echo "=================================="
 echo "Running ALL Benchmark Experiments"
 echo "=================================="
 
-RESULT_FILE="results.csv"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESULT_FILE="$SCRIPT_DIR/results/results.csv"
+mkdir -p "$SCRIPT_DIR/results"
 rm -f "$RESULT_FILE"
 
 echo ""

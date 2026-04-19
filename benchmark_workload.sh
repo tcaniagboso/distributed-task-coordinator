@@ -10,5 +10,5 @@ TASKS=10000
 
 for t in "${TYPES[@]}"; do
   echo "Running workload: type=$t"
-  ./run_benchmark.sh "$SHARDS" "$WORKERS" "$EXEC_THREADS" "$CLIENTS" "$TASKS" "$t" --no-warmup
+  ./run_benchmark.sh "$SHARDS" "$WORKERS" "$EXEC_THREADS" "$CLIENTS" "$TASKS" "$t"
 done

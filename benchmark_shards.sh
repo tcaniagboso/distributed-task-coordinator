@@ -10,5 +10,5 @@ TYPE="mixed"
 
 for s in "${SHARDS_LIST[@]}"; do
   echo "Running shard scaling: shards=$s"
-  ./run_benchmark.sh "$s" "$WORKERS" "$EXEC_THREADS" "$CLIENTS" "$TASKS" "$TYPE" --no-warmup
+  ./run_benchmark.sh "$s" "$WORKERS" "$EXEC_THREADS" "$CLIENTS" "$TASKS" "$TYPE"
 done

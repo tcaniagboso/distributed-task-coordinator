@@ -10,5 +10,5 @@ TYPE="mixed"
 
 for c in "${CLIENT_LIST[@]}"; do
   echo "Running client scaling: clients=$c"
-  ./run_benchmark.sh "$SHARDS" "$WORKERS" "$EXEC_THREADS" "$c" "$TASKS" "$TYPE" --no-warmup
+  ./run_benchmark.sh "$SHARDS" "$WORKERS" "$EXEC_THREADS" "$c" "$TASKS" "$TYPE"
 done

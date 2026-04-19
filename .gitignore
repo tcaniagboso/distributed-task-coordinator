@@ -37,3 +37,6 @@ Thumbs.db
 # Temp files
 *.tmp
 *.swp
+
+# Old files
+*old*

@@ -10,5 +10,5 @@ TYPE="mixed"
 
 for w in "${WORKERS_LIST[@]}"; do
   echo "Running worker scaling: workers=$w"
-  ./run_benchmark.sh "$SHARDS" "$w" "$EXEC_THREADS" "$CLIENTS" "$TASKS" "$TYPE" --no-warmup
+  ./run_benchmark.sh "$SHARDS" "$w" "$EXEC_THREADS" "$CLIENTS" "$TASKS" "$TYPE"
 done
