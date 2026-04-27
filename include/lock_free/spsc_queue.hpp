@@ -77,8 +77,8 @@ namespace lock_free {
 
     template<typename T>
     bool SPSCQueue<T>::try_pop(T &value) {
-        size_t head = head_.load(std::memory_order_acquire);
-        size_t tail = tail_.load(std::memory_order_relaxed);
+        size_t head = head_.load(std::memory_order_relaxed);
+        size_t tail = tail_.load(std::memory_order_acquire);
         if (tail == head) {
             return false;
         }
@@ -91,8 +91,8 @@ namespace lock_free {
 
     template<typename T>
     bool SPSCQueue<T>::try_push(const T &value) {
-        size_t head = head_.load(std::memory_order_relaxed);
-        size_t tail = tail_.load(std::memory_order_acquire);
+        size_t head = head_.load(std::memory_order_acquire);
+        size_t tail = tail_.load(std::memory_order_relaxed);
 
         if (tail - head == capacity_) {
             return false;
